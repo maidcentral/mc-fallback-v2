@@ -1,5 +1,21 @@
 # MaidCentral Backup Application - Rebuild Specification
 
+> **⚠️ HISTORICAL REFERENCE DOCUMENT**
+>
+> This document is from an older repository iteration and is kept for reference purposes only.
+>
+> **For current implementation, refer to:**
+> - **[CLAUDE.md](./CLAUDE.md)** - Current project status and instructions (PRIMARY SOURCE)
+> - **[PROJECT-PLAN.md](./PROJECT-PLAN.md)** - Detailed implementation plan
+>
+> **Key Differences from Current Implementation:**
+> - This spec mentions Format B (dispatch board) - **NOT USED in current version**
+> - Current version uses **Format A ONLY** (api/jobs/getall structure)
+> - Current version uses **shadcn/ui + Tailwind CSS** (not Material-UI as mentioned here)
+> - Current version focuses on **PDF/PNG export** (not email sending)
+
+---
+
 ## Executive Summary
 
 Build a standalone, client-side web application that allows viewing and managing cleaning service job schedules when the main MaidCentral system is offline. The app processes JSON data exports from the MaidCentral API to display job schedules, team assignments, and employee schedules in calendar views with privacy controls and email capabilities.
