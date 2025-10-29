@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Goal:** Enable automated nightly data sync and magic link email access for team members.
+**Goal:** Deploy a hosted backup application with automated hourly data sync, 7-day rolling data window, and magic link authentication.
 
 **Current State:**
 - Manual JSON file upload
@@ -10,10 +10,12 @@
 - No user authentication
 
 **Future State:**
-- Automated nightly JSON file push to Supabase Storage
-- Magic link authentication (no passwords)
-- JSON auto-loads when user accesses app via magic link
-- Host/Admin can manually trigger backup emails with magic links
+- **Hosted React app** on custom domain (e.g., backup.maidcentral.com)
+- **Hourly sync job** pulls next 7 days of schedule data from MaidCentral API
+- **Auto-cleanup** deletes data older than current date
+- **Magic link authentication** (no passwords)
+- **Supabase backend** for storage and auth
+- Host/Admin can manually send magic link emails to team members
 
 ---
 
@@ -21,40 +23,43 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│           MaidCentral API / Export Process              │
-│                 (Nightly Job)                           │
+│              MaidCentral API                            │
+│         (Source of Schedule Data)                       │
 └────────────────────┬────────────────────────────────────┘
                      │
-                     │ 1. Export JSON (Format A)
-                     │    Runs nightly (e.g., 2am)
+                     │ 1. Fetch next 7 days of data
+                     │    Runs every hour (via cron)
+                     ▼
+┌─────────────────────────────────────────────────────────┐
+│           Supabase Edge Function / Cron Job             │
+│          (Hourly Sync + Cleanup)                        │
+│                                                         │
+│  • Fetch from MaidCentral API                          │
+│  • Filter: today + next 7 days                         │
+│  • Upload to Supabase Storage                          │
+│  • Delete old files (older than today)                 │
+└────────────────────┬────────────────────────────────────┘
+                     │
+                     │ 2. Data stored
                      ▼
 ┌─────────────────────────────────────────────────────────┐
 │              Supabase Storage Bucket                    │
-│          (stores latest JSON file)                      │
+│       (Rolling 7-day data window)                       │
 │                                                         │
-│  • schedule-data.json (latest data)                    │
-│  • Accessible via signed URLs                          │
+│  • latest.json (current 7-day snapshot)                │
+│  • Auto-expires old data                               │
 └────────────────────┬────────────────────────────────────┘
                      │
-                     │ 2. User clicks magic link in email
-                     │    (sent manually by host/admin)
+                     │ 3. User accesses app
                      ▼
 ┌─────────────────────────────────────────────────────────┐
-│              Supabase Auth (Magic Link)                 │
+│         React App (Hosted on Vercel/Netlify)           │
+│         Custom Domain: backup.maidcentral.com           │
 │                                                         │
-│  • Passwordless authentication                         │
-│  • User clicks link → auto-login                       │
-└────────────────────┬────────────────────────────────────┘
-                     │
-                     │ 3. App loads, fetches JSON
-                     ▼
-┌─────────────────────────────────────────────────────────┐
-│               React Frontend (Browser)                  │
-│                                                         │
-│  • Verify auth on load                                 │
-│  • Fetch JSON from Supabase Storage                    │
-│  • Transform and display in calendars                  │
-│  • Admin panel to send magic link emails              │
+│  • Magic link authentication                           │
+│  • Fetch latest.json from Supabase Storage            │
+│  • Display calendars (7-day view)                      │
+│  • Admin: Send magic links to team                     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -130,33 +135,44 @@ CREATE TRIGGER on_auth_user_created
 
 ---
 
-### 2. Nightly Sync Job
+### 2. Hourly Sync Job with 7-Day Window
 
-#### 2.1 Simple Node.js Script
+#### 2.1 Supabase Edge Function (Recommended)
 
-Create a simple script that runs nightly (via cron, GitHub Actions, or scheduler):
+Use Supabase Edge Functions with built-in cron scheduling:
 
-```javascript
-// sync-job.js
-const { createClient } = require('@supabase/supabase-js')
-const fetch = require('node-fetch')
-const fs = require('fs')
-require('dotenv').config()
+```typescript
+// supabase/functions/hourly-sync/index.ts
+import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_ROLE_KEY
-)
+const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+const maidcentralApiUrl = Deno.env.get('MAIDCENTRAL_API_URL')!
+const maidcentralApiKey = Deno.env.get('MAIDCENTRAL_API_KEY')!
 
-async function syncScheduleData() {
-  console.log('[Sync] Starting nightly sync...', new Date().toISOString())
+const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
+serve(async (req) => {
   try {
-    // Step 1: Fetch JSON from MaidCentral API
-    console.log('[Sync] Fetching from MaidCentral API...')
-    const response = await fetch(process.env.MAIDCENTRAL_API_URL, {
+    console.log('[Sync] Starting hourly sync...', new Date().toISOString())
+
+    // Step 1: Calculate date range (today + next 7 days)
+    const today = new Date()
+    const endDate = new Date()
+    endDate.setDate(endDate.getDate() + 7)
+
+    const startDateStr = today.toISOString().split('T')[0]
+    const endDateStr = endDate.toISOString().split('T')[0]
+
+    console.log(`[Sync] Fetching data for ${startDateStr} to ${endDateStr}`)
+
+    // Step 2: Fetch from MaidCentral API with date filter
+    const apiUrl = `${maidcentralApiUrl}?startDate=${startDateStr}&endDate=${endDateStr}`
+    const response = await fetch(apiUrl, {
       headers: {
-        'Authorization': `Bearer ${process.env.MAIDCENTRAL_API_KEY}`
+        'Authorization': `Bearer ${maidcentralApiKey}`,
+        'Content-Type': 'application/json'
       }
     })
 
@@ -165,47 +181,75 @@ async function syncScheduleData() {
     }
 
     const jsonData = await response.json()
-    console.log(`[Sync] Fetched ${jsonData.Result?.length || 0} jobs`)
 
-    // Step 2: Upload to Supabase Storage
-    const fileName = 'latest.json'
-    const fileBuffer = Buffer.from(JSON.stringify(jsonData, null, 2))
-
-    const { data, error } = await supabase.storage
-      .from('schedule-data')
-      .upload(fileName, fileBuffer, {
-        contentType: 'application/json',
-        upsert: true // Overwrite existing file
+    // Filter jobs to only include 7-day window
+    const filteredData = {
+      ...jsonData,
+      Result: jsonData.Result?.filter((job: any) => {
+        const jobDate = new Date(job.JobDate)
+        return jobDate >= today && jobDate <= endDate
       })
-
-    if (error) {
-      throw error
     }
 
-    console.log('[Sync] Upload successful:', data.path)
+    console.log(`[Sync] Filtered to ${filteredData.Result?.length || 0} jobs`)
 
-    // Optional: Archive daily snapshot
-    const archiveName = `archive/${new Date().toISOString().split('T')[0]}.json`
-    await supabase.storage
+    // Step 3: Upload to Supabase Storage
+    const fileName = 'latest.json'
+    const fileContent = JSON.stringify(filteredData, null, 2)
+
+    const { error: uploadError } = await supabase.storage
       .from('schedule-data')
-      .upload(archiveName, fileBuffer, {
+      .upload(fileName, fileContent, {
         contentType: 'application/json',
-        upsert: false
+        upsert: true // Overwrite existing
       })
 
-    console.log('[Sync] Nightly sync completed successfully')
+    if (uploadError) {
+      throw uploadError
+    }
+
+    // Step 4: Cleanup old archived files (optional)
+    // List all files in archive folder
+    const { data: files } = await supabase.storage
+      .from('schedule-data')
+      .list('archive')
+
+    if (files) {
+      const oldFiles = files.filter(file => {
+        // Delete files older than today
+        const fileDate = file.name.replace('.json', '')
+        return new Date(fileDate) < today
+      })
+
+      for (const file of oldFiles) {
+        await supabase.storage
+          .from('schedule-data')
+          .remove([`archive/${file.name}`])
+      }
+
+      console.log(`[Sync] Cleaned up ${oldFiles.length} old files`)
+    }
+
+    console.log('[Sync] Hourly sync completed successfully')
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        jobs: filteredData.Result?.length,
+        dateRange: { startDateStr, endDateStr }
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    )
 
   } catch (error) {
     console.error('[Sync] Failed:', error.message)
 
-    // Optional: Send alert email
-    // await sendAlertEmail(error.message)
+    return new Response(
+      JSON.stringify({ success: false, error: error.message }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
   }
-}
-
-// Run sync
-syncScheduleData()
-```
+})
 
 #### 2.2 Environment Variables
 
@@ -218,48 +262,52 @@ MAIDCENTRAL_API_URL=https://api.maidcentral.com/api/jobs/getall
 MAIDCENTRAL_API_KEY=your-api-key
 ```
 
-#### 2.3 Scheduling Options
+#### 2.3 Set Up Hourly Cron in Supabase
 
-**Option A: Cron Job (Linux/Mac)**
+1. Deploy the Edge Function:
 ```bash
-# Run at 2am daily
-0 2 * * * cd /path/to/sync-job && node sync-job.js >> /var/log/sync.log 2>&1
+supabase functions deploy hourly-sync
 ```
 
-**Option B: GitHub Actions (Free)**
+2. Set environment variables in Supabase Dashboard:
+   - Go to **Edge Functions → hourly-sync → Settings**
+   - Add secrets: `MAIDCENTRAL_API_URL`, `MAIDCENTRAL_API_KEY`
+
+3. Schedule with `pg_cron` (built into Supabase):
+
+```sql
+-- Run hourly sync every hour at :00
+SELECT cron.schedule(
+  'hourly-schedule-sync',
+  '0 * * * *', -- Every hour
+  $$
+  SELECT
+    net.http_post(
+      url := 'https://your-project.supabase.co/functions/v1/hourly-sync',
+      headers := '{"Authorization": "Bearer YOUR_ANON_KEY"}'::jsonb
+    ) as request_id;
+  $$
+);
+```
+
+**Alternative: GitHub Actions (if you prefer)**
 ```yaml
-# .github/workflows/sync.yml
-name: Nightly Sync
+# .github/workflows/hourly-sync.yml
+name: Hourly Schedule Sync
 on:
   schedule:
-    - cron: '0 2 * * *'  # 2am UTC daily
+    - cron: '0 * * * *'  # Every hour
   workflow_dispatch:      # Manual trigger
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: '18'
-      - run: npm install
-      - run: node sync-job.js
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          MAIDCENTRAL_API_URL: ${{ secrets.MAIDCENTRAL_API_URL }}
-          MAIDCENTRAL_API_KEY: ${{ secrets.MAIDCENTRAL_API_KEY }}
-```
-
-**Option C: Heroku Scheduler (Simple)**
-```bash
-# Install Heroku Scheduler addon
-heroku addons:create scheduler:standard
-
-# Add job via dashboard:
-# Command: node sync-job.js
-# Frequency: Daily at 2am
+      - name: Trigger Supabase Edge Function
+        run: |
+          curl -X POST \
+            https://your-project.supabase.co/functions/v1/hourly-sync \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}"
 ```
 
 ---
@@ -674,16 +722,20 @@ export function AdminPanel() {
 6. Customize email template
 7. Save credentials (URL, anon key, service role key)
 
-### Step 2: Nightly Sync Job (1 hour)
+### Step 2: Hourly Sync Job (1-2 hours)
 
-1. Create `sync-job.js` script
-2. Add environment variables
+1. Create Supabase Edge Function `hourly-sync`
+2. Add environment variables in Supabase Dashboard
 3. Test locally:
    ```bash
-   node sync-job.js
+   supabase functions serve hourly-sync
    ```
-4. Choose scheduling option (GitHub Actions recommended)
-5. Deploy and test
+4. Deploy function:
+   ```bash
+   supabase functions deploy hourly-sync
+   ```
+5. Set up pg_cron schedule (hourly)
+6. Test by triggering manually
 
 ### Step 3: Frontend Updates (2-3 hours)
 
@@ -703,23 +755,76 @@ export function AdminPanel() {
 2. Add route in `App.jsx`
 3. Test sending magic links
 
-### Step 5: Testing (1 hour)
+### Step 5: Deploy React App (1 hour)
 
-1. Test nightly sync job
-2. Test magic link login
-3. Test data loading after login
-4. Test admin panel
-5. Test calendar views with loaded data
+**Option A: Vercel (Recommended)**
 
-**Total Time: 5-6 hours**
+1. Push code to GitHub
+2. Connect Vercel to your GitHub repo
+3. Configure build settings:
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+   - Install Command: `npm install`
+4. Add environment variables:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+5. Deploy
+6. Add custom domain:
+   - Go to Project Settings → Domains
+   - Add `backup.maidcentral.com`
+   - Configure DNS records:
+     ```
+     Type: CNAME
+     Name: backup
+     Value: cname.vercel-dns.com
+     ```
+
+**Option B: Netlify**
+
+1. Push code to GitHub
+2. Connect Netlify to repo
+3. Configure:
+   - Build Command: `npm run build`
+   - Publish Directory: `dist`
+4. Add environment variables
+5. Deploy
+6. Add custom domain in Site Settings
+
+**Option C: Cloudflare Pages**
+
+1. Push code to GitHub
+2. Connect Cloudflare Pages
+3. Configure build
+4. Add custom domain (already on Cloudflare DNS)
+
+### Step 6: Testing (1 hour)
+
+1. Test hourly sync job (check Supabase logs)
+2. Verify 7-day data window
+3. Test magic link login
+4. Test data loading after login
+5. Test admin panel (send magic links)
+6. Test calendar views with loaded data
+7. Verify old data gets deleted
+
+**Total Time: 6-8 hours**
 
 ---
 
 ## Cost
 
-- **Supabase Free Tier:** $0/month (sufficient for this use case)
-- **GitHub Actions:** Free (2000 minutes/month)
-- **Total: $0/month**
+- **Supabase Free Tier:** $0/month
+  - Includes Edge Functions (500K invocations/month)
+  - Storage: 1GB
+  - Auth: Unlimited users
+- **Vercel Free Tier:** $0/month
+  - 100GB bandwidth/month
+  - Automatic HTTPS
+  - Custom domain included
+- **Domain (if new):** ~$12/year
+  - Or use subdomain of existing domain: $0
+
+**Total: $0-1/month** (completely free if using existing domain)
 
 ---
 
@@ -773,9 +878,34 @@ A: Yes, if you enable archiving (`archive/YYYY-MM-DD.json`), you can add a date 
 
 ## Next Steps
 
-1. Create Supabase project
-2. Run through Step 1-5 above
-3. Test with a few users
-4. Deploy to production
+1. **Create Supabase project** → Set up storage bucket and auth
+2. **Build Edge Function** → Hourly sync with 7-day window + cleanup
+3. **Update React app** → Magic link auth + data loading
+4. **Deploy to Vercel** → Connect custom domain
+5. **Test end-to-end** → Verify hourly sync, auth, and 7-day window
+
+---
+
+## Summary
+
+### What You Get:
+
+✅ **Hosted React app** at `backup.maidcentral.com`
+✅ **Hourly automated sync** (every hour at :00)
+✅ **7-day rolling data window** (today + next 7 days)
+✅ **Auto-cleanup** of old data
+✅ **Magic link authentication** (no passwords)
+✅ **Admin panel** to send access links to team
+✅ **$0/month** (using free tiers)
+
+### Key Files to Create:
+
+1. `supabase/functions/hourly-sync/index.ts` - Edge function for sync
+2. `src/hooks/useAuth.js` - Magic link authentication
+3. `src/utils/dataLoader.js` - Load JSON from Supabase Storage
+4. `src/components/Login.jsx` - Login page
+5. `src/components/AdminPanel.jsx` - Send magic links
+
+### Implementation Time: 6-8 hours
 
 **Much simpler!** 🎉
