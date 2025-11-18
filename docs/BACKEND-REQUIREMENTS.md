@@ -78,7 +78,7 @@
 ┌─────────────────────────────────────────────────────────────┐
 │           MaidCentral API v2 (Source of Truth)              │
 │                                                             │
-│  Endpoints called by Supabase cron job nightly:            │
+│  Endpoints called by Supabase cron job hourly:             │
 │                                                             │
 │  1. GET {{url}}/api/dr-schedule/users                      │
 │     → Returns all users across all ServiceCompanyGroups    │
@@ -99,7 +99,7 @@
 
 ### Overview
 
-The backup portal syncs data from **MaidCentral API v2** using a **nightly Supabase Edge Function** triggered by pg_cron. This replaces manual JSON file uploads with automated synchronization.
+The backup portal syncs data from **MaidCentral API v2** using an **hourly Supabase Edge Function** triggered by pg_cron. This replaces manual JSON file uploads with automated synchronization.
 
 ### API Endpoints
 
@@ -165,7 +165,7 @@ The backup portal syncs data from **MaidCentral API v2** using a **nightly Supab
   - "Employee" → technician (default)
 - `ServiceCompanyId`: Associates user with company
 
-**Sync Frequency**: Nightly (2:00 AM UTC)
+**Sync Frequency**: Hourly (every hour at :00)
 
 **Processing Logic**:
 1. Iterate through `ServiceCompanyGroups[]`
@@ -212,7 +212,7 @@ Authorization: Bearer {API_KEY}
 - `Result[]` array of jobs
 - Each job has: `ScheduledTeams[]`, `CustomerInformation`, `HomeInformation`, `NotesAndMemos`, `ContactInfos[]`, `EmployeeSchedules[]`, `JobTags[]`, etc.
 
-**Sync Frequency**: Nightly (2:00 AM UTC)
+**Sync Frequency**: Hourly (every hour at :00)
 
 **Sync Strategy - 7-Day Rolling Window**:
 ```javascript
@@ -281,21 +281,21 @@ const headers = {
 
 ---
 
-### Nightly Sync Cron Job
+### Hourly Sync Cron Job
 
-**Schedule**: Every night at 2:00 AM UTC
+**Schedule**: Every hour at :00 (top of the hour)
 
 ```sql
 -- Create pg_cron job in Supabase
 SELECT cron.schedule(
-  'nightly-sync-maidcentral-v2',
-  '0 2 * * *', -- Cron expression: minute=0, hour=2, every day
+  'hourly-sync-maidcentral-v2',
+  '0 * * * *', -- Cron expression: Every hour at minute 0
   $$
   SELECT
     net.http_post(
-      url := 'https://your-project.supabase.co/functions/v1/nightly-sync',
+      url := 'https://your-project.supabase.co/functions/v1/hourly-sync',
       headers := jsonb_build_object(
-        'Authorization', 'Bearer ' || current_setting('app.settings.anon_key')
+        'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key')
       )
     ) as request_id;
   $$
@@ -304,7 +304,7 @@ SELECT cron.schedule(
 
 **Monitoring**:
 - Check `sync_jobs` table for failures
-- Alert if no sync in last 25 hours (cron failure)
+- Alert if no sync in last 90 minutes (cron failure)
 - Alert if >50% of syncs fail
 
 ---
@@ -991,18 +991,18 @@ View past communications sent:
 
 ---
 
-## Nightly Sync Process
+## Hourly Sync Process
 
 ### Overview
 
-The nightly sync runs at 2:00 AM UTC and performs a **two-step process**:
+The hourly sync runs every hour at :00 (top of the hour) and performs a **two-step process**:
 
 1. **User Sync**: Call `/api/dr-schedule/users` to provision Supabase user accounts for magic link authentication
 2. **Schedule Sync**: Loop through 7 days, calling `/api/dr-schedule?startDate=X&endDate=X` for each day (one day at a time)
 
 ### Supabase Edge Function
 
-**File:** `supabase/functions/nightly-sync/index.ts`
+**File:** `supabase/functions/hourly-sync/index.ts`
 
 ```typescript
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -1017,7 +1017,7 @@ const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
 serve(async (req) => {
   try {
-    console.log('[Sync] Starting nightly sync...')
+    console.log('[Sync] Starting hourly sync...')
 
     const syncStartTime = Date.now()
     const results = {
@@ -1133,7 +1133,7 @@ serve(async (req) => {
     // ========================================
     const syncDuration = Date.now() - syncStartTime
 
-    console.log('[Sync] Nightly sync complete:', {
+    console.log('[Sync] Hourly sync complete:', {
       duration: `${syncDuration}ms`,
       userSync: results.userSync.status,
       scheduleDaysSuccessful: results.scheduleSync.daysSuccessful,
@@ -1599,16 +1599,16 @@ SELECT cron.schedule(
 
 ```sql
 -- View cron job status
-SELECT * FROM cron.job WHERE jobname = 'nightly-sync-maidcentral-v2';
+SELECT * FROM cron.job WHERE jobname = 'hourly-sync-maidcentral-v2';
 
 -- View recent cron job runs
 SELECT * FROM cron.job_run_details
-WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = 'nightly-sync-maidcentral-v2')
+WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = 'hourly-sync-maidcentral-v2')
 ORDER BY start_time DESC
 LIMIT 10;
 
 -- Unschedule (if needed)
-SELECT cron.unschedule('nightly-sync-maidcentral-v2');
+SELECT cron.unschedule('hourly-sync-maidcentral-v2');
 ```
 
 ---
@@ -1623,9 +1623,9 @@ SELECT cron.unschedule('nightly-sync-maidcentral-v2');
 
 2. **Critical Constraint**:
    - Schedule endpoint **MUST** be called with `startDate === endDate` (one day at a time)
-   - Nightly cron job loops 7 times, making 7 separate API calls (one per day)
+   - Hourly cron job loops 7 times, making 7 separate API calls (one per day)
 
-3. **Sync Process** (2:00 AM UTC daily):
+3. **Sync Process** (Every hour at :00):
    - **Step 1**: Sync all users → create/update Supabase user accounts
    - **Step 2**: Loop through 7 days → sync schedule data for each day individually
 
@@ -1635,7 +1635,7 @@ SELECT cron.unschedule('nightly-sync-maidcentral-v2');
    - EmployeeInformationId stored for technician job filtering
 
 5. **Data Archival**:
-   - Each nightly sync overwrites data for the next 7 days
+   - Each hourly sync overwrites data for the next 7 days
    - Old data beyond 7-day window can be archived or deleted
    - Ensures backup portal always has latest schedule changes
 
@@ -1847,14 +1847,14 @@ MaidCentral Team
 4. Create indexes
 5. Test with sample nested DTO data
 
-### Phase 2: Nightly Sync Job with MaidCentral API v2 (4-5 hours)
+### Phase 2: Hourly Sync Job with MaidCentral API v2 (4-5 hours)
 
 1. **Set up MaidCentral API v2 credentials**:
    - Store `MAIDCENTRAL_API_URL` and `MAIDCENTRAL_API_KEY` in Supabase secrets
    - Test authentication with both endpoints (`/api/dr-schedule/users` and `/api/dr-schedule`)
 
-2. **Create Supabase Edge Function `nightly-sync`**:
-   - File: `supabase/functions/nightly-sync/index.ts`
+2. **Create Supabase Edge Function `hourly-sync`**:
+   - File: `supabase/functions/hourly-sync/index.ts`
    - Implement two-step sync process:
      - **Step 1**: Call `/api/dr-schedule/users` endpoint
      - **Step 2**: Loop through 7 days, calling `/api/dr-schedule?startDate=X&endDate=X` for each day
@@ -1890,8 +1890,8 @@ MaidCentral Team
 
 8. **Deploy and schedule**:
    - Deploy function to Supabase
-   - Set up pg_cron job for 2:00 AM UTC daily
-   - Monitor first few nightly syncs
+   - Set up pg_cron job for hourly execution (every hour at :00)
+   - Monitor first few hourly syncs
    - Verify sync_jobs table populated correctly
 
 ### Phase 3: Authentication & Magic Links (2 hours)
