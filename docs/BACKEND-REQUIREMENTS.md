@@ -76,19 +76,236 @@
                      │
                      ▼
 ┌─────────────────────────────────────────────────────────────┐
-│           MaidCentral API (Nested DTO Structure)            │
+│           MaidCentral API v2 (Source of Truth)              │
 │                                                             │
-│  List<ParentDto>                                           │
-│    └─ List<ServiceCompanyGroupDto>                         │
-│         └─ List<ServiceCompanyDto>                         │
-│              ├─ featureToggles (privacy settings)          │
-│              └─ List<JobDto>                               │
-│                   └─ EmployeeSchedules[]                   │
-│                        └─ EmployeeInformationId            │
+│  Endpoints called by Supabase cron job nightly:            │
 │                                                             │
-│  Hourly sync fetches next 7 days per ServiceCompany       │
+│  1. GET {{url}}/api/dr-schedule/users                      │
+│     → Returns all users across all ServiceCompanyGroups    │
+│     → Used to create/update Supabase user accounts         │
+│     → Enables magic link authentication                    │
+│                                                             │
+│  2. GET {{url}}/api/dr-schedule?startDate=X&endDate=X      │
+│     → Returns schedule/job data for ONE specific date      │
+│     → MUST query exactly 1 day at a time (startDate=endDate)│
+│     → Called 7 times in loop (7 days into future)          │
+│     → Each call overwrites/archives data for that date     │
 └─────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## MaidCentral API v2 Integration
+
+### Overview
+
+The backup portal syncs data from **MaidCentral API v2** using a **nightly Supabase Edge Function** triggered by pg_cron. This replaces manual JSON file uploads with automated synchronization.
+
+### API Endpoints
+
+#### 1. User Sync Endpoint
+
+**Endpoint**: `{{url}}/api/dr-schedule/users`
+**Method**: GET
+**Authentication**: Bearer token (stored in Supabase secrets)
+**Purpose**: Fetch all users across all ServiceCompanyGroups to provision Supabase user accounts for magic link authentication
+
+**Response Structure**:
+```json
+{
+  "Result": {
+    "GeneratedAt": "2025-11-18T20:29:58.5623404Z",
+    "DataVersion": "1.0",
+    "ServiceCompanyGroups": [
+      {
+        "ServiceCompanyGroupId": 32,
+        "Name": "One Organized Mom",
+        "IsActive": true,
+        "ServiceCompanies": [
+          {
+            "ServiceCompanyId": 59,
+            "Name": "One Organized Mom",
+            "ServiceCompanyGroupId": 32,
+            "IsActive": true,
+            "Users": [
+              {
+                "UserId": "c278b273-7d6b-4394-9911-7fe85fb50181",
+                "Email": "heather@oneorganizedmom.com",
+                "EmployeeInformationId": 3013,
+                "FirstName": "Heather",
+                "LastName": "Canning",
+                "FullName": "Heather Canning",
+                "Roles": [
+                  "Group Administrator",
+                  "Sales",
+                  "Administrator",
+                  "Office",
+                  "Employee"
+                ],
+                "ServiceCompanyId": 59
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "Message": "Active user accounts retrieved successfully. Users: 27, Companies: 1, Time: 0.19s",
+  "IsSuccess": true
+}
+```
+
+**Key Fields**:
+- `UserId`: Unique identifier from MaidCentral (maps to Supabase auth.users.id)
+- `Email`: User email (used for magic link authentication)
+- `EmployeeInformationId`: Links to employee data in jobs (for technician job filtering)
+- `Roles[]`: Array of role names (determines user_profiles.role)
+  - "Group Administrator" → superadmin or admin
+  - "Administrator" → admin
+  - "Employee" → technician (default)
+- `ServiceCompanyId`: Associates user with company
+
+**Sync Frequency**: Nightly (2:00 AM UTC)
+
+**Processing Logic**:
+1. Iterate through `ServiceCompanyGroups[]`
+2. For each `ServiceCompany`, iterate through `Users[]`
+3. Create or update Supabase user account:
+   - If UserId exists in auth.users → update profile
+   - If new UserId → create auth.users entry (via Supabase Admin API)
+   - Map highest-privilege role from Roles[] array to user_profiles.role
+   - Store EmployeeInformationId for technician job filtering
+
+**Role Mapping**:
+```javascript
+function determineRole(roles) {
+  if (roles.includes("Group Administrator")) return "superadmin"
+  if (roles.includes("Administrator") || roles.includes("Office")) return "admin"
+  return "technician" // Default for "Employee" or other roles
+}
+```
+
+---
+
+#### 2. Schedule Data Sync Endpoint
+
+**Endpoint**: `{{url}}/api/dr-schedule?startDate={date}&endDate={date}`
+**Method**: GET
+**Authentication**: Bearer token (stored in Supabase secrets)
+**Purpose**: Fetch job/schedule data for a specific date
+
+**Critical Constraint**:
+> **⚠️ MUST query exactly ONE day at a time**
+> `startDate` must equal `endDate`
+
+**Query Parameters**:
+- `startDate`: Date in YYYY-MM-DD format (e.g., "2025-10-28")
+- `endDate`: Same date as startDate (e.g., "2025-10-28")
+
+**Example Request**:
+```
+GET {{url}}/api/dr-schedule?startDate=2025-10-28&endDate=2025-10-28
+Authorization: Bearer {API_KEY}
+```
+
+**Response Structure**: Same as existing Format A (api/jobs/getall) with nested structure containing:
+- `Result[]` array of jobs
+- Each job has: `ScheduledTeams[]`, `CustomerInformation`, `HomeInformation`, `NotesAndMemos`, `ContactInfos[]`, `EmployeeSchedules[]`, `JobTags[]`, etc.
+
+**Sync Frequency**: Nightly (2:00 AM UTC)
+
+**Sync Strategy - 7-Day Rolling Window**:
+```javascript
+// Supabase Edge Function pseudocode
+async function syncScheduleData() {
+  const today = new Date()
+
+  // Loop through 7 days into the future
+  for (let i = 0; i < 7; i++) {
+    const targetDate = addDays(today, i)
+    const dateString = formatDate(targetDate, 'YYYY-MM-DD') // e.g., "2025-10-28"
+
+    // Call API with same start and end date (1 day only)
+    const response = await fetch(
+      `${MAIDCENTRAL_API_URL}/api/dr-schedule?startDate=${dateString}&endDate=${dateString}`,
+      { headers: { Authorization: `Bearer ${API_KEY}` } }
+    )
+
+    const jobs = await response.json()
+
+    // Transform and store data for this specific date
+    await storeScheduleDataForDate(jobs, targetDate)
+  }
+}
+```
+
+**Data Handling**:
+- Each nightly sync **overwrites** existing data for each of the 7 future dates
+- Old data beyond 7-day window can be archived or deleted (configurable)
+- Ensures schedule is always up-to-date with latest changes from MaidCentral
+
+**Error Handling**:
+- If one day fails to sync, continue with remaining days
+- Log failure in sync_jobs table with error details
+- Send alert if >20% of days fail to sync
+
+---
+
+### Authentication
+
+**MaidCentral API v2 Credentials**:
+
+Store in Supabase secrets (not environment variables):
+```bash
+# Set via Supabase CLI or dashboard
+supabase secrets set MAIDCENTRAL_API_URL="https://api.maidcentral.com"
+supabase secrets set MAIDCENTRAL_API_KEY="your-bearer-token-here"
+```
+
+**Authentication Flow**:
+```typescript
+// In Supabase Edge Function
+const apiUrl = Deno.env.get('MAIDCENTRAL_API_URL')
+const apiKey = Deno.env.get('MAIDCENTRAL_API_KEY')
+
+const headers = {
+  'Authorization': `Bearer ${apiKey}`,
+  'Content-Type': 'application/json'
+}
+```
+
+**Token Rotation**:
+- Rotate API keys quarterly
+- Update Supabase secret when key changes
+- Test new key before revoking old key
+
+---
+
+### Nightly Sync Cron Job
+
+**Schedule**: Every night at 2:00 AM UTC
+
+```sql
+-- Create pg_cron job in Supabase
+SELECT cron.schedule(
+  'nightly-sync-maidcentral-v2',
+  '0 2 * * *', -- Cron expression: minute=0, hour=2, every day
+  $$
+  SELECT
+    net.http_post(
+      url := 'https://your-project.supabase.co/functions/v1/nightly-sync',
+      headers := jsonb_build_object(
+        'Authorization', 'Bearer ' || current_setting('app.settings.anon_key')
+      )
+    ) as request_id;
+  $$
+);
+```
+
+**Monitoring**:
+- Check `sync_jobs` table for failures
+- Alert if no sync in last 25 hours (cron failure)
+- Alert if >50% of syncs fail
 
 ---
 
@@ -774,11 +991,18 @@ View past communications sent:
 
 ---
 
-## Hourly Sync Process
+## Nightly Sync Process
+
+### Overview
+
+The nightly sync runs at 2:00 AM UTC and performs a **two-step process**:
+
+1. **User Sync**: Call `/api/dr-schedule/users` to provision Supabase user accounts for magic link authentication
+2. **Schedule Sync**: Loop through 7 days, calling `/api/dr-schedule?startDate=X&endDate=X` for each day (one day at a time)
 
 ### Supabase Edge Function
 
-**File:** `supabase/functions/hourly-sync/index.ts`
+**File:** `supabase/functions/nightly-sync/index.ts`
 
 ```typescript
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -786,56 +1010,140 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!
 const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-const maidcentralApiUrl = Deno.env.get('MAIDCENTRAL_API_URL')! // Returns nested DTO structure
+const maidcentralApiUrl = Deno.env.get('MAIDCENTRAL_API_URL')!
+const maidcentralApiKey = Deno.env.get('MAIDCENTRAL_API_KEY')!
 
 const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
 serve(async (req) => {
   try {
-    console.log('[Sync] Starting hourly sync for all groups and companies...')
+    console.log('[Sync] Starting nightly sync...')
 
-    // Fetch nested DTO structure from MaidCentral API
-    // Expected structure: List<ParentDto> → List<ServiceCompanyGroupDto> → List<ServiceCompanyDto> → List<JobDto>
-    const response = await fetch(maidcentralApiUrl, {
-      headers: {
-        'Authorization': `Bearer ${Deno.env.get('MAIDCENTRAL_API_KEY')}`,
-        'Content-Type': 'application/json'
-      }
-    })
-
-    if (!response.ok) {
-      throw new Error(`MaidCentral API failed: ${response.status}`)
+    const syncStartTime = Date.now()
+    const results = {
+      userSync: { status: 'pending', usersProcessed: 0 },
+      scheduleSync: { daysSuccessful: 0, daysFailed: 0, details: [] }
     }
 
-    const nestedData = await response.json() // List<ParentDto>
+    // ========================================
+    // STEP 1: Sync Users
+    // ========================================
+    console.log('[Sync] Step 1: Syncing users from /api/dr-schedule/users')
 
-    console.log(`[Sync] Fetched nested DTO structure from MaidCentral`)
-
-    const results = []
-
-    // Process each ServiceCompanyGroup
-    for (const parentDto of nestedData) {
-      for (const groupDto of parentDto.serviceCompanyGroups || []) {
-        // Upsert group
-        await upsertGroup(groupDto)
-
-        // Process each ServiceCompany within the group
-        for (const companyDto of groupDto.serviceCompanies || []) {
-          const result = await syncCompany(groupDto, companyDto)
-          results.push(result)
+    try {
+      const usersResponse = await fetch(`${maidcentralApiUrl}/api/dr-schedule/users`, {
+        headers: {
+          'Authorization': `Bearer ${maidcentralApiKey}`,
+          'Content-Type': 'application/json'
         }
+      })
+
+      if (!usersResponse.ok) {
+        throw new Error(`User sync failed: ${usersResponse.status} ${usersResponse.statusText}`)
+      }
+
+      const usersData = await usersResponse.json()
+
+      if (!usersData.IsSuccess) {
+        throw new Error(`User sync API returned IsSuccess=false: ${usersData.Message}`)
+      }
+
+      // Process users
+      const usersProcessed = await syncUsers(usersData.Result)
+
+      results.userSync = {
+        status: 'success',
+        usersProcessed,
+        message: usersData.Message
+      }
+
+      console.log(`[Sync] User sync complete: ${usersProcessed} users processed`)
+
+    } catch (error) {
+      console.error('[Sync] User sync failed:', error)
+      results.userSync = {
+        status: 'failed',
+        error: error.message
+      }
+      // Continue to schedule sync even if user sync fails
+    }
+
+    // ========================================
+    // STEP 2: Sync Schedule Data (7 days, one at a time)
+    // ========================================
+    console.log('[Sync] Step 2: Syncing schedule data (7-day rolling window)')
+
+    const today = new Date()
+    today.setHours(0, 0, 0, 0) // Start of day
+
+    for (let i = 0; i < 7; i++) {
+      const targetDate = new Date(today)
+      targetDate.setDate(today.getDate() + i)
+
+      const dateString = targetDate.toISOString().split('T')[0] // YYYY-MM-DD
+
+      try {
+        console.log(`[Sync] Syncing day ${i + 1}/7: ${dateString}`)
+
+        // CRITICAL: startDate must equal endDate (one day at a time)
+        const scheduleResponse = await fetch(
+          `${maidcentralApiUrl}/api/dr-schedule?startDate=${dateString}&endDate=${dateString}`,
+          {
+            headers: {
+              'Authorization': `Bearer ${maidcentralApiKey}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        )
+
+        if (!scheduleResponse.ok) {
+          throw new Error(`Schedule sync failed for ${dateString}: ${scheduleResponse.status}`)
+        }
+
+        const scheduleData = await scheduleResponse.json()
+
+        // Transform and store data for this date
+        const jobsStored = await storeScheduleDataForDate(scheduleData, dateString)
+
+        results.scheduleSync.daysSuccessful++
+        results.scheduleSync.details.push({
+          date: dateString,
+          status: 'success',
+          jobsStored
+        })
+
+        console.log(`[Sync] Day ${dateString} synced successfully: ${jobsStored} jobs`)
+
+      } catch (error) {
+        console.error(`[Sync] Failed to sync day ${dateString}:`, error)
+
+        results.scheduleSync.daysFailed++
+        results.scheduleSync.details.push({
+          date: dateString,
+          status: 'failed',
+          error: error.message
+        })
+
+        // Continue to next day even if this day fails
       }
     }
 
-    const successful = results.filter(r => r.status === 'success').length
-    const failed = results.filter(r => r.status === 'failed').length
+    // ========================================
+    // Final Results
+    // ========================================
+    const syncDuration = Date.now() - syncStartTime
+
+    console.log('[Sync] Nightly sync complete:', {
+      duration: `${syncDuration}ms`,
+      userSync: results.userSync.status,
+      scheduleDaysSuccessful: results.scheduleSync.daysSuccessful,
+      scheduleDaysFailed: results.scheduleSync.daysFailed
+    })
 
     return new Response(
       JSON.stringify({
         success: true,
-        totalCompanies: results.length,
-        successful,
-        failed,
+        duration: syncDuration,
         results
       }),
       { headers: { 'Content-Type': 'application/json' } }
@@ -850,186 +1158,239 @@ serve(async (req) => {
   }
 })
 
-async function upsertGroup(groupDto: any) {
-  // Upsert ServiceCompanyGroup
-  const { error } = await supabase
-    .from('service_company_groups')
-    .upsert({
-      group_id: groupDto.groupId,
-      group_name: groupDto.groupName,
-      portal_enabled: groupDto.portalEnabled || false,
-      updated_at: new Date().toISOString()
-    }, {
-      onConflict: 'group_id'
-    })
+// ========================================
+// Helper Functions
+// ========================================
 
-  if (error) {
-    console.error(`[Sync] Failed to upsert group ${groupDto.groupName}:`, error)
-  } else {
-    console.log(`[Sync] Upserted group: ${groupDto.groupName}`)
-  }
-}
+/**
+ * Sync users from MaidCentral API to Supabase
+ * Creates/updates user accounts for magic link authentication
+ */
+async function syncUsers(apiResult: any): Promise<number> {
+  let totalUsersProcessed = 0
 
-async function syncCompany(groupDto: any, companyDto: any) {
-  const startTime = Date.now()
-  const syncJobId = crypto.randomUUID()
+  // Iterate through ServiceCompanyGroups
+  for (const group of apiResult.ServiceCompanyGroups || []) {
+    console.log(`[Sync] Processing group: ${group.Name}`)
 
-  try {
-    console.log(`[Sync] Syncing company: ${companyDto.name}`)
-
-    // Get group from database
-    const { data: group } = await supabase
+    // Upsert ServiceCompanyGroup
+    const { data: groupRecord, error: groupError } = await supabase
       .from('service_company_groups')
-      .select('id')
-      .eq('group_id', groupDto.groupId)
-      .single()
-
-    if (!group) {
-      throw new Error(`Group ${groupDto.groupId} not found`)
-    }
-
-    // Upsert company with featureToggles
-    const { data: company, error: companyError } = await supabase
-      .from('companies')
       .upsert({
-        service_company_id: companyDto.serviceCompanyId,
-        name: companyDto.name,
-        group_id: group.id,
-        feature_toggles: companyDto.featureToggles || {}, // Privacy settings from MaidCentral
-        portal_enabled: companyDto.portalEnabled || false,
-        sync_enabled: companyDto.syncEnabled || true,
+        group_id: String(group.ServiceCompanyGroupId),
+        group_name: group.Name,
+        portal_enabled: group.IsActive || false,
         updated_at: new Date().toISOString()
       }, {
-        onConflict: 'service_company_id',
-        returning: 'representation'
+        onConflict: 'group_id'
       })
       .select()
       .single()
 
-    if (companyError) throw companyError
+    if (groupError) {
+      console.error(`[Sync] Failed to upsert group ${group.Name}:`, groupError)
+      continue
+    }
 
-    // Log sync job start
-    await supabase.from('sync_jobs').insert({
-      id: syncJobId,
-      company_id: company.id,
-      status: 'pending',
-      started_at: new Date().toISOString()
-    })
+    // Iterate through ServiceCompanies within group
+    for (const company of group.ServiceCompanies || []) {
+      console.log(`[Sync] Processing company: ${company.Name}`)
 
-    // Calculate 7-day window
-    const today = new Date()
-    const endDate = new Date()
-    endDate.setDate(endDate.getDate() + 7)
+      // Upsert ServiceCompany
+      const { data: companyRecord, error: companyError } = await supabase
+        .from('companies')
+        .upsert({
+          service_company_id: String(company.ServiceCompanyId),
+          name: company.Name,
+          group_id: groupRecord.id,
+          portal_enabled: company.IsActive || false,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'service_company_id'
+        })
+        .select()
+        .single()
 
-    const startDateStr = today.toISOString().split('T')[0]
-    const endDateStr = endDate.toISOString().split('T')[0]
+      if (companyError) {
+        console.error(`[Sync] Failed to upsert company ${company.Name}:`, companyError)
+        continue
+      }
 
-    // Filter jobs to 7-day window
-    const filteredJobs = (companyDto.jobs || []).filter((job: any) => {
-      const jobDate = new Date(job.jobDate)
-      return jobDate >= today && jobDate <= endDate
-    })
+      // Iterate through Users within company
+      for (const user of company.Users || []) {
+        try {
+          // Determine role from Roles array
+          const role = determineUserRole(user.Roles || [])
 
-    console.log(`[Sync] Filtered ${filteredJobs.length} jobs for 7-day window`)
+          // Check if user already exists in auth.users (via user_profiles)
+          const { data: existingProfile } = await supabase
+            .from('user_profiles')
+            .select('id, email')
+            .eq('email', user.Email)
+            .single()
 
-    // Transform data (reuse existing transformation logic)
-    const transformed = transformJobData(filteredJobs)
+          if (existingProfile) {
+            // Update existing user profile
+            await supabase
+              .from('user_profiles')
+              .update({
+                full_name: user.FullName,
+                role,
+                employee_information_id: user.EmployeeInformationId ? String(user.EmployeeInformationId) : null,
+                company_id: companyRecord.id,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', existingProfile.id)
 
-    // Upsert schedule data
+            console.log(`[Sync] Updated user: ${user.Email}`)
+          } else {
+            // Create new user via Supabase Admin API
+            // Note: This creates a user WITHOUT a password (magic link only)
+            const { data: newUser, error: authError } = await supabase.auth.admin.createUser({
+              email: user.Email,
+              email_confirm: true, // Auto-confirm email
+              user_metadata: {
+                full_name: user.FullName,
+                first_name: user.FirstName,
+                last_name: user.LastName
+              }
+            })
+
+            if (authError) {
+              console.error(`[Sync] Failed to create auth user for ${user.Email}:`, authError)
+              continue
+            }
+
+            // Create user profile
+            await supabase
+              .from('user_profiles')
+              .insert({
+                id: newUser.user.id,
+                email: user.Email,
+                full_name: user.FullName,
+                role,
+                employee_information_id: user.EmployeeInformationId ? String(user.EmployeeInformationId) : null,
+                company_id: companyRecord.id,
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              })
+
+            console.log(`[Sync] Created new user: ${user.Email} (role: ${role})`)
+          }
+
+          totalUsersProcessed++
+
+        } catch (error) {
+          console.error(`[Sync] Failed to sync user ${user.Email}:`, error)
+        }
+      }
+    }
+  }
+
+  return totalUsersProcessed
+}
+
+/**
+ * Determine user role from MaidCentral Roles array
+ * Priority: Group Administrator > Administrator/Office > Employee (default)
+ */
+function determineUserRole(roles: string[]): string {
+  if (roles.includes('Group Administrator')) {
+    return 'superadmin' // Or 'admin' if you want less privilege
+  }
+  if (roles.includes('Administrator') || roles.includes('Office')) {
+    return 'admin'
+  }
+  return 'technician' // Default for "Employee" or other roles
+}
+
+/**
+ * Store schedule data for a specific date
+ * Transforms jobs from MaidCentral API format to internal format
+ */
+async function storeScheduleDataForDate(apiResponse: any, dateString: string): Promise<number> {
+  // Transform API response to internal format
+  const transformed = transformJobData(apiResponse.Result || [])
+
+  let totalJobsStored = 0
+
+  // Group jobs by company (if jobs have ServiceCompanyId)
+  // For now, assume all jobs are for the same company or we need to extract company info from jobs
+
+  // Extract unique companies from jobs
+  const companiesByServiceId = new Map<string, any[]>()
+
+  for (const job of transformed.jobs || []) {
+    // Assuming jobs have a ServiceCompanyId field (adjust based on actual API response)
+    const serviceCompanyId = job.serviceCompanyId || 'default'
+
+    if (!companiesByServiceId.has(serviceCompanyId)) {
+      companiesByServiceId.set(serviceCompanyId, [])
+    }
+    companiesByServiceId.get(serviceCompanyId)!.push(job)
+  }
+
+  // Store data for each company
+  for (const [serviceCompanyId, jobs] of companiesByServiceId.entries()) {
+    // Get company record from database
+    const { data: company } = await supabase
+      .from('companies')
+      .select('id')
+      .eq('service_company_id', serviceCompanyId)
+      .single()
+
+    if (!company) {
+      console.warn(`[Sync] Company ${serviceCompanyId} not found in database, skipping jobs`)
+      continue
+    }
+
+    // Prepare data for this company
+    const companyData = {
+      metadata: {
+        ...transformed.metadata,
+        syncDate: dateString,
+        lastUpdated: new Date().toISOString()
+      },
+      teams: transformed.teams,
+      jobs: jobs,
+      employees: transformed.employees
+    }
+
+    // Upsert schedule_data for this company and date
+    // Note: May need to adjust schema to support per-date storage instead of per-company
     const { error: upsertError } = await supabase
       .from('schedule_data')
       .upsert({
         company_id: company.id,
-        data: transformed,
-        start_date: startDateStr,
-        end_date: endDateStr,
+        data: companyData,
+        start_date: dateString,
+        end_date: dateString,
         updated_at: new Date().toISOString()
       }, {
-        onConflict: 'company_id'
+        onConflict: 'company_id' // Or use composite key (company_id, start_date) if schema supports
       })
 
-    if (upsertError) throw upsertError
-
-    // Update company last_sync_at
-    await supabase
-      .from('companies')
-      .update({
-        last_sync_at: new Date().toISOString(),
-        sync_status: 'success'
-      })
-      .eq('id', company.id)
-
-    // Update sync job as success
-    const duration = Date.now() - startTime
-    await supabase
-      .from('sync_jobs')
-      .update({
-        status: 'success',
-        jobs_fetched: filteredJobs.length,
-        jobs_stored: transformed.jobs?.length || 0,
-        completed_at: new Date().toISOString(),
-        duration_ms: duration
-      })
-      .eq('id', syncJobId)
-
-    console.log(`[Sync] Company ${company.name} synced successfully (${duration}ms)`)
-
-    return {
-      companyId: company.id,
-      companyName: company.name,
-      status: 'success',
-      jobsSynced: transformed.jobs?.length || 0,
-      duration
-    }
-
-  } catch (error) {
-    console.error(`[Sync] Company ${companyDto.name} failed:`, error)
-
-    // Update sync job as failed (if company exists)
-    const { data: existingCompany } = await supabase
-      .from('companies')
-      .select('id')
-      .eq('service_company_id', companyDto.serviceCompanyId)
-      .single()
-
-    if (existingCompany) {
-      await supabase
-        .from('sync_jobs')
-        .update({
-          status: 'failed',
-          error_message: error.message,
-          completed_at: new Date().toISOString(),
-          duration_ms: Date.now() - startTime
-        })
-        .eq('id', syncJobId)
-
-      await supabase
-        .from('companies')
-        .update({ sync_status: 'failed' })
-        .eq('id', existingCompany.id)
-    }
-
-    return {
-      companyId: companyDto.serviceCompanyId,
-      companyName: companyDto.name,
-      status: 'failed',
-      error: error.message
+    if (upsertError) {
+      console.error(`[Sync] Failed to store schedule data for company ${serviceCompanyId}:`, upsertError)
+    } else {
+      totalJobsStored += jobs.length
+      console.log(`[Sync] Stored ${jobs.length} jobs for company ${serviceCompanyId} on ${dateString}`)
     }
   }
+
+  return totalJobsStored
 }
 
-// Transform job data from nested DTO structure
+/**
+ * Transform job data from MaidCentral API format to internal format
+ * Input: Array of jobs from MaidCentral API (Format A structure)
+ * Output: Internal format with metadata, teams, jobs, employees
+ */
 function transformJobData(jobs: any[]) {
-  // Reuse existing transformation logic from dataTransform.js
-  // Input: Array of JobDto objects (from ServiceCompanyDto.jobs[])
-  // Output: Internal format with metadata, teams, jobs, employees
-
-  // Note: EmployeeSchedules[] contains EmployeeInformationId for filtering
-
   return {
     metadata: {
       lastUpdated: new Date().toISOString(),
-      dataFormat: 'nested-dto',
+      dataFormat: 'maidcentral-api-v2',
       jobCount: jobs.length
     },
     teams: extractTeams(jobs),
@@ -1038,44 +1399,254 @@ function transformJobData(jobs: any[]) {
   }
 }
 
+/**
+ * Extract unique teams from jobs
+ * Teams come from ScheduledTeams[] array in each job
+ */
 function extractTeams(jobs: any[]) {
-  // Extract unique teams from jobs
-  // Same logic as existing dataTransform.js
-  return []
+  const teamsMap = new Map<string, any>()
+
+  // Always add "Unassigned" team
+  teamsMap.set('0', {
+    id: '0',
+    name: 'Unassigned',
+    color: '#999999',
+    sortOrder: 9999
+  })
+
+  for (const job of jobs) {
+    if (job.ScheduledTeams && Array.isArray(job.ScheduledTeams)) {
+      for (const team of job.ScheduledTeams) {
+        if (team.TeamListId && !teamsMap.has(String(team.TeamListId))) {
+          teamsMap.set(String(team.TeamListId), {
+            id: String(team.TeamListId),
+            name: team.TeamListDescription || `Team ${team.TeamListId}`,
+            color: team.Color || '#3498db',
+            sortOrder: team.SortOrder || 0
+          })
+        }
+      }
+    }
+  }
+
+  // Convert to array and sort by sortOrder
+  return Array.from(teamsMap.values()).sort((a, b) => a.sortOrder - b.sortOrder)
 }
 
+/**
+ * Transform jobs to internal format
+ * Preserves EmployeeSchedules for technician filtering
+ */
 function transformJobs(jobs: any[]) {
-  // Transform jobs with EmployeeSchedules
-  // Keep EmployeeInformationId for filtering
-  return jobs.map(job => ({
-    ...job,
-    employeeSchedules: job.EmployeeSchedules || []
-  }))
+  return jobs.map(job => {
+    // Extract scheduled team IDs
+    const scheduledTeams = (job.ScheduledTeams || []).map((t: any) => String(t.TeamListId))
+
+    // If no teams, assign to "Unassigned"
+    if (scheduledTeams.length === 0) {
+      scheduledTeams.push('0')
+    }
+
+    // Build customer name
+    const customerName = job.CustomerInformation
+      ? `${job.CustomerInformation.CustomerFirstName || ''} ${job.CustomerInformation.CustomerLastName || ''}`.trim()
+      : 'Unknown Customer'
+
+    // Build address
+    const homeInfo = job.HomeInformation || {}
+    const address = [
+      homeInfo.HomeAddress1,
+      homeInfo.HomeAddress2,
+      [homeInfo.HomeCity, homeInfo.HomeRegion, homeInfo.HomePostalCode].filter(Boolean).join(', ')
+    ].filter(Boolean).join(', ')
+
+    // Extract contact info
+    const contacts = job.ContactInfos || []
+    const phone = contacts.find((c: any) => c.ContactTypeId === 1 || c.ContactTypeId === 2)?.ContactInfo || ''
+    const email = contacts.find((c: any) => c.ContactTypeId === 3)?.ContactInfo || ''
+
+    // Extract all tags
+    const tags = [
+      ...(job.JobTags || []).map((t: any) => ({ ...t, type: 'job' })),
+      ...(job.HomeTags || []).map((t: any) => ({ ...t, type: 'home' })),
+      ...(job.CustomerTags || []).map((t: any) => ({ ...t, type: 'customer' }))
+    ]
+
+    return {
+      id: String(job.JobInformationId),
+      serviceCompanyId: String(job.ServiceCompanyId || 'default'), // Add if available in API
+      customerName,
+      serviceType: job.ServiceSet?.ServiceSetDescription || '',
+      scopeOfWork: job.ServiceSet?.ServiceSetTypeDescription || '',
+      address,
+      eventInstructions: job.NotesAndMemos?.EventInstructions || '',
+      specialInstructions: job.NotesAndMemos?.HomeSpecialInstructions || '',
+      petInstructions: job.NotesAndMemos?.HomePetInstructions || '',
+      directions: job.NotesAndMemos?.HomeDirections || '',
+      specialEquipment: job.NotesAndMemos?.HomeSpecialEquipment || '',
+      wasteInfo: job.NotesAndMemos?.HomeWasteDisposal || '',
+      accessInformation: job.NotesAndMemos?.HomeAccessInformation || '',
+      internalMemo: job.NotesAndMemos?.HomeInternalMemo || '',
+      tags,
+      scheduledTeams,
+      schedule: {
+        date: job.JobDate ? new Date(job.JobDate).toISOString().split('T')[0] : '',
+        startTime: job.ScheduledStartTime ? new Date(job.ScheduledStartTime).toISOString().slice(11, 16) : '',
+        endTime: job.ScheduledEndTime ? new Date(job.ScheduledEndTime).toISOString().slice(11, 16) : ''
+      },
+      billRate: job.BillRate || 0,
+      contactInfo: {
+        phone,
+        email
+      },
+      // Preserve EmployeeSchedules for technician job filtering
+      employeeSchedules: job.EmployeeSchedules || []
+    }
+  })
 }
 
+/**
+ * Extract unique employees from jobs
+ * Maps EmployeeInformationId for linking to user profiles
+ */
 function extractEmployees(jobs: any[]) {
-  // Extract unique employees from EmployeeSchedules
-  // Include EmployeeInformationId for linking to user profiles
-  return []
+  const employeesMap = new Map<string, any>()
+
+  for (const job of jobs) {
+    if (job.EmployeeSchedules && Array.isArray(job.EmployeeSchedules)) {
+      for (const emp of job.EmployeeSchedules) {
+        const empId = String(emp.EmployeeInformationId)
+
+        if (!employeesMap.has(empId)) {
+          employeesMap.set(empId, {
+            id: empId,
+            firstName: emp.FirstName || '',
+            lastName: emp.LastName || '',
+            name: `${emp.FirstName || ''} ${emp.LastName || ''}`.trim(),
+            teamId: emp.TeamListId ? String(emp.TeamListId) : '0',
+            position: {
+              id: emp.TeamPosition || 0,
+              name: getPositionName(emp.TeamPosition),
+              color: getPositionColor(emp.TeamPosition)
+            },
+            shifts: []
+          })
+        }
+
+        // Add shift for this job
+        employeesMap.get(empId)!.shifts.push({
+          jobId: String(job.JobInformationId),
+          date: job.JobDate ? new Date(job.JobDate).toISOString().split('T')[0] : '',
+          startTime: job.ScheduledStartTime ? new Date(job.ScheduledStartTime).toISOString().slice(11, 16) : '',
+          endTime: job.ScheduledEndTime ? new Date(job.ScheduledEndTime).toISOString().slice(11, 16) : ''
+        })
+      }
+    }
+  }
+
+  return Array.from(employeesMap.values())
+}
+
+/**
+ * Map TeamPosition ID to position name
+ */
+function getPositionName(positionId: number): string {
+  const positions: Record<number, string> = {
+    0: 'Unassigned',
+    1: 'Team Leader',
+    2: 'Team Member',
+    3: 'Quality Control',
+    4: 'Trainer'
+  }
+  return positions[positionId] || 'Unknown'
+}
+
+/**
+ * Map TeamPosition ID to color
+ */
+function getPositionColor(positionId: number): string {
+  const colors: Record<number, string> = {
+    0: '#999999',
+    1: '#E74C3C',
+    2: '#3498DB',
+    3: '#2ECC71',
+    4: '#F39C12'
+  }
+  return colors[positionId] || '#999999'
 }
 ```
 
 ### Schedule with pg_cron
 
 ```sql
--- Run hourly sync every hour at :00
+-- Run nightly sync at 2:00 AM UTC every day
 SELECT cron.schedule(
-  'hourly-schedule-sync-all-companies',
-  '0 * * * *', -- Every hour
+  'nightly-sync-maidcentral-v2',
+  '0 2 * * *', -- At 2:00 AM UTC daily (minute=0, hour=2, every day)
   $$
   SELECT
     net.http_post(
-      url := 'https://your-project.supabase.co/functions/v1/hourly-sync',
-      headers := '{"Authorization": "Bearer YOUR_ANON_KEY"}'::jsonb
+      url := 'https://your-project.supabase.co/functions/v1/nightly-sync',
+      headers := jsonb_build_object(
+        'Authorization', 'Bearer ' || current_setting('app.settings.service_role_key')
+      )
     ) as request_id;
   $$
 );
 ```
+
+**Monitoring the Cron Job:**
+
+```sql
+-- View cron job status
+SELECT * FROM cron.job WHERE jobname = 'nightly-sync-maidcentral-v2';
+
+-- View recent cron job runs
+SELECT * FROM cron.job_run_details
+WHERE jobid = (SELECT jobid FROM cron.job WHERE jobname = 'nightly-sync-maidcentral-v2')
+ORDER BY start_time DESC
+LIMIT 10;
+
+-- Unschedule (if needed)
+SELECT cron.unschedule('nightly-sync-maidcentral-v2');
+```
+
+---
+
+### Summary: MaidCentral API v2 Integration
+
+**Key Points**:
+
+1. **Two API Endpoints**:
+   - `{{url}}/api/dr-schedule/users` - Syncs all users for magic link authentication
+   - `{{url}}/api/dr-schedule?startDate=X&endDate=X` - Syncs schedule data for ONE day
+
+2. **Critical Constraint**:
+   - Schedule endpoint **MUST** be called with `startDate === endDate` (one day at a time)
+   - Nightly cron job loops 7 times, making 7 separate API calls (one per day)
+
+3. **Sync Process** (2:00 AM UTC daily):
+   - **Step 1**: Sync all users → create/update Supabase user accounts
+   - **Step 2**: Loop through 7 days → sync schedule data for each day individually
+
+4. **User Provisioning**:
+   - Users from `/api/dr-schedule/users` are created in Supabase auth.users (passwordless)
+   - Roles mapped: "Group Administrator" → superadmin, "Administrator" → admin, "Employee" → technician
+   - EmployeeInformationId stored for technician job filtering
+
+5. **Data Archival**:
+   - Each nightly sync overwrites data for the next 7 days
+   - Old data beyond 7-day window can be archived or deleted
+   - Ensures backup portal always has latest schedule changes
+
+6. **Error Handling**:
+   - User sync failure doesn't block schedule sync
+   - One day's failure doesn't stop other days from syncing
+   - All failures logged in sync_jobs table for monitoring
+
+7. **Authentication**:
+   - MaidCentral API v2 credentials stored in Supabase secrets
+   - Bearer token authentication for all API calls
 
 ---
 
@@ -1276,20 +1847,52 @@ MaidCentral Team
 4. Create indexes
 5. Test with sample nested DTO data
 
-### Phase 2: Hourly Sync Job (4 hours)
+### Phase 2: Nightly Sync Job with MaidCentral API v2 (4-5 hours)
 
-1. Create Supabase Edge Function `hourly-sync`
-2. Implement nested DTO parsing logic:
-   - Parse ServiceCompanyGroups
-   - Parse ServiceCompanies within groups
-   - Extract featureToggles from companies
-   - Filter jobs to 7-day window
-3. Implement upsertGroup and syncCompany functions
-4. Add error handling and logging
-5. Test locally with sample nested DTO data from MaidCentral
-6. Deploy function
-7. Set up pg_cron schedule
-8. Monitor first few syncs
+1. **Set up MaidCentral API v2 credentials**:
+   - Store `MAIDCENTRAL_API_URL` and `MAIDCENTRAL_API_KEY` in Supabase secrets
+   - Test authentication with both endpoints (`/api/dr-schedule/users` and `/api/dr-schedule`)
+
+2. **Create Supabase Edge Function `nightly-sync`**:
+   - File: `supabase/functions/nightly-sync/index.ts`
+   - Implement two-step sync process:
+     - **Step 1**: Call `/api/dr-schedule/users` endpoint
+     - **Step 2**: Loop through 7 days, calling `/api/dr-schedule?startDate=X&endDate=X` for each day
+
+3. **Implement `syncUsers()` function**:
+   - Parse ServiceCompanyGroups → ServiceCompanies → Users structure
+   - Upsert groups, companies, and user accounts
+   - Use Supabase Admin API to create auth.users (passwordless)
+   - Map MaidCentral Roles[] to user_profiles.role
+   - Store EmployeeInformationId for technician job filtering
+
+4. **Implement `storeScheduleDataForDate()` function**:
+   - Accept one day's data at a time
+   - Transform using existing `transformJobData()` logic
+   - Store per-company schedule data with date metadata
+   - Handle companies not yet in database gracefully
+
+5. **Implement transformation functions**:
+   - `extractTeams()`: Extract from ScheduledTeams[]
+   - `transformJobs()`: Preserve EmployeeSchedules[] for filtering
+   - `extractEmployees()`: Build employee shifts from jobs
+
+6. **Add comprehensive error handling**:
+   - Continue schedule sync if user sync fails
+   - Continue to next day if one day fails
+   - Log all failures in sync_jobs table
+   - Alert if >20% of days fail
+
+7. **Test locally**:
+   - Use `allusers.json` sample to test user sync
+   - Use `chs-alljobs.json` to test schedule sync
+   - Verify 7-day loop with single-day queries
+
+8. **Deploy and schedule**:
+   - Deploy function to Supabase
+   - Set up pg_cron job for 2:00 AM UTC daily
+   - Monitor first few nightly syncs
+   - Verify sync_jobs table populated correctly
 
 ### Phase 3: Authentication & Magic Links (2 hours)
 
