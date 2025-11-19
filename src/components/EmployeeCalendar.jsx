@@ -10,15 +10,35 @@ import { Card } from './ui/card'
 import { Alert, AlertDescription } from './ui/alert'
 import { Select } from './ui/select'
 import { Switch, Label } from './ui/switch'
+import { Input } from './ui/input'
 import { getContrastTextColor } from '../utils/colorHelpers'
 
-export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
-  const [selectedTeam, setSelectedTeam] = useState('all')
-  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0])
+export default function EmployeeCalendar({ data, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
   const calendarRef = useRef(null)
   const hasScrolledToToday = useRef(false)
+  const isNavigatingProgrammatically = useRef(false)
 
-  // Auto-scroll to today's date when calendar loads
+  // Handle date picker change
+  const handleDateChange = (e) => {
+    const newDate = e.target.value
+    if (newDate && calendarRef.current) {
+      isNavigatingProgrammatically.current = true
+      const calendarApi = calendarRef.current.getApi()
+      calendarApi.gotoDate(newDate)
+      setSelectedDate(newDate)
+    }
+  }
+
+  // Navigate to selectedDate when component mounts or selectedDate changes
+  useEffect(() => {
+    if (calendarRef.current && selectedDate) {
+      isNavigatingProgrammatically.current = true
+      const calendarApi = calendarRef.current.getApi()
+      calendarApi.gotoDate(selectedDate)
+    }
+  }, [selectedDate])
+
+  // Auto-scroll to current time when calendar loads
   useEffect(() => {
     if (calendarRef.current && !hasScrolledToToday.current) {
       const calendarApi = calendarRef.current.getApi()
@@ -50,11 +70,41 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
 
   // Prepare resources for timeline views (employees as rows)
   const employees = data.employees.filter(emp => {
-    if (selectedTeam === 'all') return true
-    return emp.teamId === selectedTeam
+    // Always exclude Team 0 (Unassigned)
+    if (emp.teamId === '0') return false
+
+    // Filter by team
+    if (selectedTeam !== 'all' && emp.teamId !== selectedTeam) return false
+
+    // Filter by company - employee must have at least one shift for a job in the selected company
+    if (selectedCompany !== 'all') {
+      const hasShiftInCompany = emp.shifts.some(shift => {
+        const job = data.jobs.find(j => j.id === shift.jobId)
+        return job && job.companyId === selectedCompany
+      })
+      if (!hasShiftInCompany) return false
+    }
+
+    return true
   })
 
-  const resources = employees.map(emp => {
+  // Sort employees by team sortOrder, then alphabetically by name
+  const sortedEmployees = [...employees].sort((a, b) => {
+    const teamA = data.teams.find(t => t.id === a.teamId)
+    const teamB = data.teams.find(t => t.id === b.teamId)
+
+    // First, sort by team sortOrder
+    const sortOrderA = teamA?.sortOrder ?? 999
+    const sortOrderB = teamB?.sortOrder ?? 999
+    if (sortOrderA !== sortOrderB) {
+      return sortOrderA - sortOrderB
+    }
+
+    // Then, sort alphabetically by name within the same team
+    return a.name.localeCompare(b.name)
+  })
+
+  const resources = sortedEmployees.map(emp => {
     const team = data.teams.find(t => t.id === emp.teamId)
     return {
       id: emp.id,
@@ -68,37 +118,46 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
   })
 
   // Transform employee shifts to calendar events
-  const events = employees.flatMap(emp => {
+  const events = sortedEmployees.flatMap(emp => {
     const team = data.teams.find(t => t.id === emp.teamId)
     const teamColor = team?.color || '#CCCCCC'
     const textColor = getContrastTextColor(teamColor)
 
-    return emp.shifts.map(shift => {
-      // Find the job for this shift to get more details
-      const job = data.jobs.find(j => j.id === shift.jobId)
-      const customerName = job?.customerName || 'Unknown Customer'
-      const addressShort = job?.address ? job.address.split(',')[0] : ''
-
-      return {
-        id: `${emp.id}-${shift.jobId}`,
-        start: `${shift.date}T${shift.startTime}`,
-        end: `${shift.date}T${shift.endTime}`,
-        title: customerName,
-        backgroundColor: teamColor,
-        borderColor: teamColor,
-        textColor: textColor,
-        resourceId: emp.id,
-        extendedProps: {
-          employee: emp,
-          shift,
-          job,
-          customerName,
-          address: addressShort,
-          timeRange: `${shift.startTime}-${shift.endTime}`,
-          textColor
+    return emp.shifts
+      .filter(shift => {
+        // Filter shifts by company
+        if (selectedCompany !== 'all') {
+          const job = data.jobs.find(j => j.id === shift.jobId)
+          return job && job.companyId === selectedCompany
         }
-      }
-    })
+        return true
+      })
+      .map(shift => {
+        // Find the job for this shift to get more details
+        const job = data.jobs.find(j => j.id === shift.jobId)
+        const customerName = job?.customerName || 'Unknown Customer'
+        const addressShort = job?.address ? job.address.split(',')[0] : ''
+
+        return {
+          id: `${emp.id}-${shift.jobId}`,
+          start: `${shift.date}T${shift.startTime}`,
+          end: `${shift.date}T${shift.endTime}`,
+          title: customerName,
+          backgroundColor: teamColor,
+          borderColor: teamColor,
+          textColor: textColor,
+          resourceId: emp.id,
+          extendedProps: {
+            employee: emp,
+            shift,
+            job,
+            customerName,
+            address: addressShort,
+            timeRange: `${shift.startTime}-${shift.endTime}`,
+            textColor
+          }
+        }
+      })
   })
 
   // Handle event click
@@ -163,6 +222,25 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
       {/* Controls */}
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-4">
+          {/* Company Filter - only show if multiple companies */}
+          {data.companies && data.companies.length > 1 && (
+            <div className="flex items-center gap-2">
+              <Label>Company:</Label>
+              <Select
+                value={selectedCompany}
+                onChange={(e) => setSelectedCompany(e.target.value)}
+                className="w-[200px]"
+              >
+                <option value="all">All Companies</option>
+                {data.companies.map(company => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
           {/* Team Filter */}
           <div className="flex items-center gap-2">
             <Label>Team:</Label>
@@ -182,6 +260,17 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
             </Select>
           </div>
 
+          {/* Date Picker */}
+          <div className="flex items-center gap-2">
+            <Label>Jump to date:</Label>
+            <Input
+              type="date"
+              value={selectedDate}
+              onChange={handleDateChange}
+              className="w-[160px]"
+            />
+          </div>
+
           {/* Privacy Toggle */}
           <div className="flex items-center gap-2 ml-auto">
             <Switch
@@ -197,6 +286,7 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
       {/* Calendar */}
       <Card className="p-4">
         <FullCalendar
+          key={`employee-calendar-${selectedDate}`}
           ref={calendarRef}
           plugins={[
             dayGridPlugin,
@@ -207,6 +297,7 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
             interactionPlugin
           ]}
           initialView="resourceTimelineDay"
+          initialDate={selectedDate}
           headerToolbar={{
             left: 'prev,next today',
             center: 'title',
@@ -246,9 +337,14 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo }) {
             if (dateInfo.view.type.includes('timeline')) {
               hasScrolledToToday.current = false
             }
-            // Update current date to match the view's start date
-            const viewDate = dateInfo.start.toISOString().split('T')[0]
-            setCurrentDate(viewDate)
+            // Only update selectedDate if user navigated manually (not programmatically)
+            if (!isNavigatingProgrammatically.current) {
+              const viewDate = dateInfo.start.toISOString().split('T')[0]
+              setSelectedDate(viewDate)
+            } else {
+              // Reset flag after programmatic navigation completes
+              isNavigatingProgrammatically.current = false
+            }
           }}
         />
       </Card>

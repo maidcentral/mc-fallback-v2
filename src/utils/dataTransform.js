@@ -57,6 +57,9 @@ export function transformFormatA(jsonData) {
 
   const jobs = jsonData.Result
 
+  // Extract list of companies (Format A doesn't have explicit company structure, so create a default)
+  const companies = []
+
   // Extract unique teams from all jobs
   const teams = extractTeams(jobs)
 
@@ -71,6 +74,7 @@ export function transformFormatA(jsonData) {
 
   return {
     metadata,
+    companies,
     teams,
     jobs: transformedJobs,
     employees
@@ -401,6 +405,9 @@ export function transformDRAllData(jsonData) {
     throw new Error('Invalid DR All Data format: Missing Result.ServiceCompanyGroups')
   }
 
+  // Extract list of companies
+  const companies = extractCompanies(jsonData.Result.ServiceCompanyGroups)
+
   // Flatten the hierarchical structure to get all jobs
   const jobs = flattenDRAllDataJobs(jsonData.Result.ServiceCompanyGroups)
 
@@ -421,6 +428,7 @@ export function transformDRAllData(jsonData) {
 
   return {
     metadata,
+    companies,
     teams,
     jobs: transformedJobs,
     employees
@@ -429,8 +437,9 @@ export function transformDRAllData(jsonData) {
 
 /**
  * Flatten DR All Data hierarchical structure to get all jobs
+ * Adds ServiceCompanyId and ServiceCompanyName to each job
  * @param {Array} serviceCompanyGroups - Array of service company group objects
- * @returns {Array} - Flat array of all jobs
+ * @returns {Array} - Flat array of all jobs with company info added
  */
 function flattenDRAllDataJobs(serviceCompanyGroups) {
   const allJobs = []
@@ -439,13 +448,41 @@ function flattenDRAllDataJobs(serviceCompanyGroups) {
     if (Array.isArray(group.ServiceCompanies)) {
       group.ServiceCompanies.forEach(company => {
         if (Array.isArray(company.Jobs)) {
-          allJobs.push(...company.Jobs)
+          // Add company info to each job
+          const jobsWithCompanyInfo = company.Jobs.map(job => ({
+            ...job,
+            ServiceCompanyId: company.ServiceCompanyId,
+            ServiceCompanyName: company.Name
+          }))
+          allJobs.push(...jobsWithCompanyInfo)
         }
       })
     }
   })
 
   return allJobs
+}
+
+/**
+ * Extract list of companies from service company groups
+ * @param {Array} serviceCompanyGroups - Array of service company group objects
+ * @returns {Array} - Array of company objects with id and name
+ */
+function extractCompanies(serviceCompanyGroups) {
+  const companies = []
+
+  serviceCompanyGroups.forEach(group => {
+    if (Array.isArray(group.ServiceCompanies)) {
+      group.ServiceCompanies.forEach(company => {
+        companies.push({
+          id: String(company.ServiceCompanyId),
+          name: company.Name
+        })
+      })
+    }
+  })
+
+  return companies
 }
 
 /**
@@ -538,6 +575,8 @@ function transformJobDR(job) {
 
   return {
     id: String(job.JobInformationId),
+    companyId: String(job.ServiceCompanyId),
+    companyName: job.ServiceCompanyName || '',
     customerName,
     serviceType,
     scopeOfWork,

@@ -13,6 +13,9 @@ import { usePersistedData } from './hooks/usePersistedData'
 function App() {
   const { data, saveData, clearData } = usePersistedData()
   const [hideInfo, setHideInfo] = useState(false)
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+  const [selectedCompany, setSelectedCompany] = useState('all')
+  const [selectedTeam, setSelectedTeam] = useState('all')
 
   return (
     <Router>
@@ -27,11 +30,35 @@ function App() {
             />
             <Route
               path="/jobs"
-              element={<JobCalendar data={data} hideInfo={hideInfo} setHideInfo={setHideInfo} />}
+              element={
+                <JobCalendar
+                  data={data}
+                  hideInfo={hideInfo}
+                  setHideInfo={setHideInfo}
+                  selectedDate={selectedDate}
+                  setSelectedDate={setSelectedDate}
+                  selectedCompany={selectedCompany}
+                  setSelectedCompany={setSelectedCompany}
+                  selectedTeam={selectedTeam}
+                  setSelectedTeam={setSelectedTeam}
+                />
+              }
             />
             <Route
               path="/employees"
-              element={<EmployeeCalendar data={data} hideInfo={hideInfo} setHideInfo={setHideInfo} />}
+              element={
+                <EmployeeCalendar
+                  data={data}
+                  hideInfo={hideInfo}
+                  setHideInfo={setHideInfo}
+                  selectedDate={selectedDate}
+                  setSelectedDate={setSelectedDate}
+                  selectedCompany={selectedCompany}
+                  setSelectedCompany={setSelectedCompany}
+                  selectedTeam={selectedTeam}
+                  setSelectedTeam={setSelectedTeam}
+                />
+              }
             />
             <Route
               path="/export"

@@ -10,15 +10,35 @@ import { Card } from './ui/card'
 import { Alert, AlertDescription } from './ui/alert'
 import { Select } from './ui/select'
 import { Switch, Label } from './ui/switch'
+import { Input } from './ui/input'
 import { getContrastTextColor } from '../utils/colorHelpers'
 
-export default function JobCalendar({ data, hideInfo, setHideInfo }) {
-  const [selectedTeam, setSelectedTeam] = useState('all')
-  const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0])
+export default function JobCalendar({ data, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
   const calendarRef = useRef(null)
   const hasScrolledToToday = useRef(false)
+  const isNavigatingProgrammatically = useRef(false)
 
-  // Auto-scroll to today's date when calendar loads
+  // Handle date picker change
+  const handleDateChange = (e) => {
+    const newDate = e.target.value
+    if (newDate && calendarRef.current) {
+      isNavigatingProgrammatically.current = true
+      const calendarApi = calendarRef.current.getApi()
+      calendarApi.gotoDate(newDate)
+      setSelectedDate(newDate)
+    }
+  }
+
+  // Navigate to selectedDate when component mounts or selectedDate changes
+  useEffect(() => {
+    if (calendarRef.current && selectedDate) {
+      isNavigatingProgrammatically.current = true
+      const calendarApi = calendarRef.current.getApi()
+      calendarApi.gotoDate(selectedDate)
+    }
+  }, [selectedDate])
+
+  // Auto-scroll to current time when calendar loads
   useEffect(() => {
     if (calendarRef.current && !hasScrolledToToday.current) {
       const calendarApi = calendarRef.current.getApi()
@@ -56,7 +76,7 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
       const teamEmployees = data.employees.filter(emp => {
         if (emp.teamId !== team.id) return false
         // Check if employee has any shifts on the current date
-        return emp.shifts?.some(shift => shift.date === currentDate)
+        return emp.shifts?.some(shift => shift.date === selectedDate)
       })
 
       return {
@@ -72,6 +92,8 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
   // Transform jobs to calendar events
   const events = data.jobs
     .filter(job => {
+      // Filter by company
+      if (selectedCompany !== 'all' && job.companyId !== selectedCompany) return false
       // Filter by selected team
       if (selectedTeam === 'all') return true
       return job.scheduledTeams.includes(selectedTeam)
@@ -176,6 +198,25 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
       {/* Controls */}
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-4">
+          {/* Company Filter - only show if multiple companies */}
+          {data.companies && data.companies.length > 1 && (
+            <div className="flex items-center gap-2">
+              <Label>Company:</Label>
+              <Select
+                value={selectedCompany}
+                onChange={(e) => setSelectedCompany(e.target.value)}
+                className="w-[200px]"
+              >
+                <option value="all">All Companies</option>
+                {data.companies.map(company => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
           {/* Team Filter */}
           <div className="flex items-center gap-2">
             <Label>Team:</Label>
@@ -195,6 +236,17 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
             </Select>
           </div>
 
+          {/* Date Picker */}
+          <div className="flex items-center gap-2">
+            <Label>Jump to date:</Label>
+            <Input
+              type="date"
+              value={selectedDate}
+              onChange={handleDateChange}
+              className="w-[160px]"
+            />
+          </div>
+
           {/* Privacy Toggle */}
           <div className="flex items-center gap-2 ml-auto">
             <Switch
@@ -210,6 +262,7 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
       {/* Calendar */}
       <Card className="p-4">
         <FullCalendar
+          key={`job-calendar-${selectedDate}`}
           ref={calendarRef}
           plugins={[
             dayGridPlugin,
@@ -220,6 +273,7 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
             interactionPlugin
           ]}
           initialView="resourceTimelineDay"
+          initialDate={selectedDate}
           headerToolbar={{
             left: 'prev,next today',
             center: 'title',
@@ -279,9 +333,14 @@ export default function JobCalendar({ data, hideInfo, setHideInfo }) {
             if (dateInfo.view.type.includes('timeline')) {
               hasScrolledToToday.current = false
             }
-            // Update current date to match the view's start date
-            const viewDate = dateInfo.start.toISOString().split('T')[0]
-            setCurrentDate(viewDate)
+            // Only update selectedDate if user navigated manually (not programmatically)
+            if (!isNavigatingProgrammatically.current) {
+              const viewDate = dateInfo.start.toISOString().split('T')[0]
+              setSelectedDate(viewDate)
+            } else {
+              // Reset flag after programmatic navigation completes
+              isNavigatingProgrammatically.current = false
+            }
           }}
         />
       </Card>
