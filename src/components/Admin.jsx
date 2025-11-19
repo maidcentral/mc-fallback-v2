@@ -4,7 +4,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from './ui/
 import { Button } from './ui/button'
 import { Alert, AlertDescription, AlertTitle } from './ui/alert'
 import { Badge } from './ui/badge'
-import { transformFormatA } from '../utils/dataTransform'
+import { transformData } from '../utils/dataTransform'
 
 export default function Admin({ data, saveData, clearData }) {
   const [uploading, setUploading] = useState(false)
@@ -65,10 +65,10 @@ export default function Admin({ data, saveData, clearData }) {
         throw new Error('Invalid JSON file. Please check the file format.')
       }
 
-      // Transform data
+      // Transform data (auto-detects format)
       let transformedData
       try {
-        transformedData = transformFormatA(jsonData)
+        transformedData = transformData(jsonData)
       } catch (transformError) {
         throw new Error(`Data transformation failed: ${transformError.message}`)
       }
@@ -77,7 +77,8 @@ export default function Admin({ data, saveData, clearData }) {
       const saved = saveData(transformedData)
 
       if (saved) {
-        setSuccess(`Successfully loaded ${transformedData.jobs.length} jobs, ${transformedData.teams.length - 1} teams, and ${transformedData.employees.length} employees.`)
+        const formatName = transformedData.metadata?.dataFormat === 'dr-all-data' ? 'DR All Data' : 'Format A'
+        setSuccess(`Successfully loaded ${transformedData.jobs.length} jobs, ${transformedData.teams.length - 1} teams, and ${transformedData.employees.length} employees using ${formatName} format.`)
 
         // Navigate to dashboard after 2 seconds
         setTimeout(() => {
@@ -122,7 +123,7 @@ export default function Admin({ data, saveData, clearData }) {
         <CardHeader>
           <CardTitle>Upload JSON Data</CardTitle>
           <CardDescription>
-            Upload a JSON file from MaidCentral API (Format A - api/jobs/getall)
+            Upload a JSON file from MaidCentral API (supports Format A and DR All Data formats)
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -207,6 +208,18 @@ export default function Admin({ data, saveData, clearData }) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Company:</span>
+                <span className="text-sm text-muted-foreground">
+                  {data.metadata?.companyName || 'MaidCentral'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-sm font-medium">Data Format:</span>
+                <Badge variant="outline">
+                  {data.metadata?.dataFormat === 'dr-all-data' ? 'DR All Data' : 'Format A'}
+                </Badge>
+              </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">Total Jobs:</span>
                 <Badge>{data.metadata?.stats?.totalJobs || 0}</Badge>

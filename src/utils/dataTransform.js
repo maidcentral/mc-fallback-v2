@@ -1,11 +1,49 @@
 /**
  * Data Transformation Utility
- * Transforms Format A (api/jobs/getall) to internal format
+ * Transforms Format A (api/jobs/getall) and DR All Data format to internal format
  * Handles null safety, team extraction, employee extraction, and metadata generation
  */
 
 import { format, parseISO, min, max } from 'date-fns'
 import { getPositionById } from '../constants/teamPositions'
+
+/**
+ * Detect which data format is being used
+ * @param {Object} jsonData - Raw JSON data
+ * @returns {string} - 'formatA' or 'drAllData'
+ */
+function detectFormat(jsonData) {
+  if (!jsonData || !jsonData.Result) {
+    throw new Error('Invalid data: Missing Result')
+  }
+
+  // Format A: Result is an array of jobs
+  if (Array.isArray(jsonData.Result)) {
+    return 'formatA'
+  }
+
+  // DR All Data: Result is an object with ServiceCompanyGroups
+  if (jsonData.Result.ServiceCompanyGroups && Array.isArray(jsonData.Result.ServiceCompanyGroups)) {
+    return 'drAllData'
+  }
+
+  throw new Error('Unknown data format: Unable to detect format')
+}
+
+/**
+ * Main transformation function - auto-detects format
+ * @param {Object} jsonData - Raw JSON data from MaidCentral API
+ * @returns {Object} - Transformed data in internal format
+ */
+export function transformData(jsonData) {
+  const format = detectFormat(jsonData)
+
+  if (format === 'formatA') {
+    return transformFormatA(jsonData)
+  } else {
+    return transformDRAllData(jsonData)
+  }
+}
 
 /**
  * Main transformation function for Format A (api/jobs/getall)
@@ -341,6 +379,258 @@ function calculateMetadata(jobs, teams, employees) {
     companyName: 'MaidCentral',
     lastUpdated: new Date().toISOString(),
     dataFormat: 'getall',
+    dataRange: {
+      startDate,
+      endDate
+    },
+    stats: {
+      totalJobs: jobs.length,
+      totalTeams: teams.length - 1, // Exclude "Unassigned" team from count
+      totalEmployees: employees.length
+    }
+  }
+}
+
+/**
+ * Main transformation function for DR All Data format
+ * @param {Object} jsonData - Raw JSON data from DR All Data API
+ * @returns {Object} - Transformed data in internal format
+ */
+export function transformDRAllData(jsonData) {
+  if (!jsonData || !jsonData.Result || !jsonData.Result.ServiceCompanyGroups) {
+    throw new Error('Invalid DR All Data format: Missing Result.ServiceCompanyGroups')
+  }
+
+  // Flatten the hierarchical structure to get all jobs
+  const jobs = flattenDRAllDataJobs(jsonData.Result.ServiceCompanyGroups)
+
+  // Extract company name from first company (if available)
+  const companyName = extractCompanyName(jsonData.Result.ServiceCompanyGroups)
+
+  // Extract unique teams from all jobs (using DR format fields)
+  const teams = extractTeamsDR(jobs)
+
+  // Transform jobs to internal format (using DR format fields)
+  const transformedJobs = jobs.map(job => transformJobDR(job))
+
+  // Extract employees from all jobs
+  const employees = extractEmployees(jobs)
+
+  // Calculate metadata (with DR-specific data)
+  const metadata = calculateMetadataDR(transformedJobs, teams, employees, jsonData.Result, companyName)
+
+  return {
+    metadata,
+    teams,
+    jobs: transformedJobs,
+    employees
+  }
+}
+
+/**
+ * Flatten DR All Data hierarchical structure to get all jobs
+ * @param {Array} serviceCompanyGroups - Array of service company group objects
+ * @returns {Array} - Flat array of all jobs
+ */
+function flattenDRAllDataJobs(serviceCompanyGroups) {
+  const allJobs = []
+
+  serviceCompanyGroups.forEach(group => {
+    if (Array.isArray(group.ServiceCompanies)) {
+      group.ServiceCompanies.forEach(company => {
+        if (Array.isArray(company.Jobs)) {
+          allJobs.push(...company.Jobs)
+        }
+      })
+    }
+  })
+
+  return allJobs
+}
+
+/**
+ * Extract company name from service company groups
+ * @param {Array} serviceCompanyGroups - Array of service company group objects
+ * @returns {string} - Company name
+ */
+function extractCompanyName(serviceCompanyGroups) {
+  if (!serviceCompanyGroups || serviceCompanyGroups.length === 0) {
+    return 'MaidCentral'
+  }
+
+  // Try to get from first company
+  const firstGroup = serviceCompanyGroups[0]
+  if (firstGroup.ServiceCompanies && firstGroup.ServiceCompanies.length > 0) {
+    return firstGroup.ServiceCompanies[0].Name || firstGroup.Name || 'MaidCentral'
+  }
+
+  return firstGroup.Name || 'MaidCentral'
+}
+
+/**
+ * Extract unique teams from jobs in DR format
+ * @param {Array} jobs - Array of raw job objects from DR format
+ * @returns {Array} - Array of unique team objects
+ */
+function extractTeamsDR(jobs) {
+  const teamMap = new Map()
+
+  // Always add "Unassigned" team
+  teamMap.set('0', {
+    id: '0',
+    name: 'Unassigned',
+    color: '#999999',
+    sortOrder: 999
+  })
+
+  jobs.forEach(job => {
+    const scheduledTeams = job.ScheduledTeams || []
+
+    scheduledTeams.forEach(team => {
+      if (team.TeamListId && !teamMap.has(String(team.TeamListId))) {
+        teamMap.set(String(team.TeamListId), {
+          id: String(team.TeamListId),
+          name: team.TeamListDescription || 'Unknown Team',
+          color: team.Color || '#CCCCCC',
+          // Use SortOrder if available, fallback to TeamListId
+          sortOrder: team.SortOrder || team.TeamListId || 0
+        })
+      }
+    })
+  })
+
+  // Convert map to array and sort by sortOrder
+  return Array.from(teamMap.values()).sort((a, b) => a.sortOrder - b.sortOrder)
+}
+
+/**
+ * Transform a single job from DR format to internal format
+ * @param {Object} job - Raw job object from DR format
+ * @returns {Object} - Transformed job object
+ */
+function transformJobDR(job) {
+  // Extract customer name (fields are flattened at job level in DR format)
+  const customerName = job.CustomerFullName ||
+    `${job.CustomerFirstName || ''} ${job.CustomerLastName || ''}`.trim() ||
+    'Unknown Customer'
+
+  // Extract address (fields are flattened at job level in DR format)
+  const address = buildAddressDR(job)
+
+  // Extract service type and scope (fields are flattened at job level)
+  const serviceType = job.ServiceSetDescription || 'Unknown Service'
+  const scopeOfWork = job.ServiceSetTypeDescription || 'Unknown'
+
+  // Extract all instructions (fields are flattened at job level in DR format)
+  const instructions = extractInstructionsDR(job)
+
+  // Extract contact info
+  const contactInfo = extractContactInfo(job.ContactInfos)
+
+  // Extract tags
+  const tags = extractTags(job)
+
+  // Extract scheduled teams
+  const scheduledTeams = extractScheduledTeams(job.ScheduledTeams)
+
+  // Extract schedule
+  const schedule = extractSchedule(job)
+
+  return {
+    id: String(job.JobInformationId),
+    customerName,
+    serviceType,
+    scopeOfWork,
+    address,
+    ...instructions,
+    tags,
+    scheduledTeams,
+    schedule,
+    // Use BillRate if available, fallback to BaseFeeLog.Amount
+    billRate: job.BillRate || job.BaseFeeLog?.Amount || 0,
+    contactInfo
+  }
+}
+
+/**
+ * Build address string from flattened DR format job fields
+ * @param {Object} job - Job object with flattened address fields
+ * @returns {string} - Formatted address
+ */
+function buildAddressDR(job) {
+  const parts = []
+
+  if (job.HomeAddress1) parts.push(job.HomeAddress1)
+  if (job.HomeAddress2) parts.push(job.HomeAddress2)
+
+  const cityStateZip = [
+    job.HomeCity,
+    job.HomeRegion,
+    job.HomePostalCode
+  ].filter(Boolean).join(' ')
+
+  if (cityStateZip) parts.push(cityStateZip)
+
+  return parts.join(', ') || 'Unknown Address'
+}
+
+/**
+ * Extract all instruction fields from flattened DR format
+ * @param {Object} job - Raw job object with flattened instruction fields
+ * @returns {Object} - Object with all instruction fields
+ */
+function extractInstructionsDR(job) {
+  return {
+    eventInstructions: job.EventInstructions || '',
+    specialInstructions: job.HomeSpecialInstructions || job.ServiceSetSpecialInstructions || '',
+    petInstructions: job.HomePetInstructions || '',
+    directions: job.HomeDirections || '', // Now available in DR format
+    specialEquipment: job.HomeSpecialEquipment || job.ServiceSetSpecialEquipment || '',
+    wasteInfo: job.HomeWasteDisposal || '',
+    accessInformation: job.HomeAccessInformation || '',
+    internalMemo: job.HomeInternalMemo || ''
+  }
+}
+
+/**
+ * Calculate metadata from DR format transformed data
+ * @param {Array} jobs - Transformed jobs array
+ * @param {Array} teams - Teams array
+ * @param {Array} employees - Employees array
+ * @param {Object} resultData - Original Result object from DR format
+ * @param {string} companyName - Extracted company name
+ * @returns {Object} - Metadata object
+ */
+function calculateMetadataDR(jobs, teams, employees, resultData, companyName) {
+  // Use provided date range if available
+  let startDate = ''
+  let endDate = ''
+
+  if (resultData.DateRange) {
+    try {
+      startDate = format(parseISO(resultData.DateRange.StartDate), 'yyyy-MM-dd')
+      endDate = format(parseISO(resultData.DateRange.EndDate), 'yyyy-MM-dd')
+    } catch (error) {
+      console.error('Error parsing DateRange:', error)
+    }
+  }
+
+  // Fallback to calculating from jobs if no DateRange provided
+  if (!startDate || !endDate) {
+    const dates = jobs
+      .map(job => job.schedule.date)
+      .filter(Boolean)
+      .map(dateStr => parseISO(dateStr))
+
+    startDate = dates.length > 0 ? format(min(dates), 'yyyy-MM-dd') : ''
+    endDate = dates.length > 0 ? format(max(dates), 'yyyy-MM-dd') : ''
+  }
+
+  return {
+    companyName: companyName,
+    lastUpdated: resultData.GeneratedAt || new Date().toISOString(),
+    dataFormat: 'dr-all-data',
+    dataVersion: resultData.DataVersion || '1.0',
     dataRange: {
       startDate,
       endDate
