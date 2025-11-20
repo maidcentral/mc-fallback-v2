@@ -12,8 +12,9 @@ import { Select } from './ui/select'
 import { Switch, Label } from './ui/switch'
 import { Input } from './ui/input'
 import { getContrastTextColor } from '../utils/colorHelpers'
+import { shouldHideField } from '../utils/userPreferences'
 
-export default function JobCalendar({ data, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
+export default function JobCalendar({ data, viewMode, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
   const calendarRef = useRef(null)
   const hasScrolledToToday = useRef(false)
   const isNavigatingProgrammatically = useRef(false)
@@ -370,13 +371,16 @@ function generateTooltipHTML(job, teams, hideInfo) {
         <div><strong>Address:</strong> ${job.address}</div>
   `
 
+  // Get FeatureToggles from data
+  const featureToggles = data?.metadata?.featureToggles
+
   // Add bill rate if not hidden
-  if (!hideInfo && job.billRate) {
+  if (!shouldHideField(viewMode, hideInfo, 'billRate', featureToggles) && job.billRate) {
     html += `<div><strong>Bill Rate:</strong> $${job.billRate.toFixed(2)}</div>`
   }
 
   // Add contact info if not hidden
-  if (!hideInfo) {
+  if (!shouldHideField(viewMode, hideInfo, 'contactInfo', featureToggles)) {
     if (job.contactInfo.phone) {
       html += `<div><strong>Phone:</strong> ${job.contactInfo.phone}</div>`
     }
@@ -403,10 +407,14 @@ function generateTooltipHTML(job, teams, hideInfo) {
     { label: 'Directions', value: job.directions },
     { label: 'Special Equipment', value: job.specialEquipment },
     { label: 'Waste Info', value: job.wasteInfo },
-    { label: 'Access Information', value: job.accessInformation },
   ]
 
-  if (!hideInfo && job.internalMemo) {
+  // Add sensitive instruction fields only if not hidden
+  if (!shouldHideField(viewMode, hideInfo, null, featureToggles) && job.accessInformation) {
+    instructions.push({ label: 'Access Information', value: job.accessInformation })
+  }
+
+  if (!shouldHideField(viewMode, hideInfo, null, featureToggles) && job.internalMemo) {
     instructions.push({ label: 'Internal Memo', value: job.internalMemo })
   }
 

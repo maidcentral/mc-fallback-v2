@@ -12,8 +12,9 @@ import { Select } from './ui/select'
 import { Switch, Label } from './ui/switch'
 import { Input } from './ui/input'
 import { getContrastTextColor } from '../utils/colorHelpers'
+import { shouldHideField } from '../utils/userPreferences'
 
-export default function EmployeeCalendar({ data, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
+export default function EmployeeCalendar({ data, viewMode, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
   const calendarRef = useRef(null)
   const hasScrolledToToday = useRef(false)
   const isNavigatingProgrammatically = useRef(false)
@@ -185,7 +186,8 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo, selected
       overflow-y: auto;
     `
 
-    tooltip.innerHTML = generateShiftTooltipHTML(employee, shift, job, hideInfo)
+    const featureToggles = data?.metadata?.featureToggles
+    tooltip.innerHTML = generateShiftTooltipHTML(employee, shift, job, viewMode, hideInfo, featureToggles)
 
     document.body.appendChild(tooltip)
 
@@ -353,7 +355,7 @@ export default function EmployeeCalendar({ data, hideInfo, setHideInfo, selected
 }
 
 // Generate tooltip HTML for shift details
-function generateShiftTooltipHTML(employee, shift, job, hideInfo) {
+function generateShiftTooltipHTML(employee, shift, job, viewMode, hideInfo, featureToggles) {
   if (!job) {
     return `
       <div style="font-family: system-ui, -apple-system, sans-serif;">
@@ -393,20 +395,67 @@ function generateShiftTooltipHTML(employee, shift, job, hideInfo) {
         <strong>Address:</strong> ${job.address || 'N/A'}
       </div>
 
-      ${!hideInfo && job.contactInfo ? `
-        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
-          <strong>Contact:</strong> ${job.contactInfo}
-        </div>
-      ` : ''}
+      ${getContactInfoHTML(job, viewMode, hideInfo, featureToggles)}
 
-      ${job.instructions ? `
-        <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
-          <strong>Instructions:</strong>
-          <div style="margin-top: 4px; font-size: 14px; color: #666;">
-            ${job.instructions}
-          </div>
-        </div>
-      ` : ''}
+      ${getInstructionsHTML(job, viewMode, hideInfo, featureToggles)}
+    </div>
+  `
+}
+
+// Generate contact info HTML
+function getContactInfoHTML(job, viewMode, hideInfo, featureToggles) {
+  const hideField = shouldHideField(viewMode, hideInfo, 'contactInfo', featureToggles)
+
+  if (hideField || !job.contactInfo) {
+    return ''
+  }
+
+  const contactParts = []
+  if (job.contactInfo.phone) {
+    contactParts.push(`Phone: ${job.contactInfo.phone}`)
+  }
+  if (job.contactInfo.email) {
+    contactParts.push(`Email: ${job.contactInfo.email}`)
+  }
+
+  if (contactParts.length === 0) {
+    return ''
+  }
+
+  return `
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+      <strong>Contact:</strong> ${contactParts.join(' | ')}
+    </div>
+  `
+}
+
+// Generate instructions HTML (excluding sensitive fields in technician view)
+function getInstructionsHTML(job, viewMode, hideInfo, featureToggles) {
+  const hideField = shouldHideField(viewMode, hideInfo, null, featureToggles)
+
+  const instructions = []
+
+  // Always show these instructions
+  if (job.specialInstructions) instructions.push(`<strong>Special Instructions:</strong> ${job.specialInstructions}`)
+  if (job.petInstructions) instructions.push(`<strong>Pet Instructions:</strong> ${job.petInstructions}`)
+  if (job.directions) instructions.push(`<strong>Directions:</strong> ${job.directions}`)
+
+  // Only show sensitive instructions in office view
+  if (!hideField) {
+    if (job.accessInformation) instructions.push(`<strong>Access Information:</strong> ${job.accessInformation}`)
+    if (job.internalMemo) instructions.push(`<strong>Internal Memo:</strong> ${job.internalMemo}`)
+  }
+
+  if (instructions.length === 0) {
+    return ''
+  }
+
+  return `
+    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
+      <strong>Instructions:</strong>
+      <div style="margin-top: 4px; font-size: 14px; color: #666;">
+        ${instructions.join('<br/><br/>')}
+      </div>
     </div>
   `
 }

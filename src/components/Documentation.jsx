@@ -36,10 +36,32 @@ export default function Documentation() {
             Use the Export page to generate PDF or PNG files of team schedules for distribution.
           </p>
 
-          <h3>4. Privacy Controls</h3>
+          <h3>4. View Modes & Privacy Controls</h3>
           <p>
-            Use the "Hide Sensitive Information" toggle to hide bill rates and contact information
-            when sharing your screen.
+            <strong>Office View vs Technician View:</strong> Toggle between these modes in the header.
+          </p>
+          <ul className="list-disc pl-6 space-y-2">
+            <li>
+              <strong>Office View (default):</strong> Shows ALL data regardless of privacy settings.
+              Intended for office staff who need access to billing, customer contacts, and access codes.
+            </li>
+            <li>
+              <strong>Technician View:</strong> Respects the "Hide Sensitive Information" toggle.
+              Intended for field technicians viewing their assignments.
+            </li>
+          </ul>
+          <p className="mt-3">
+            <strong>Privacy Toggle:</strong> When in Technician View with "Hide Sensitive Information" enabled, the following fields are hidden:
+          </p>
+          <ul className="list-disc pl-6 space-y-1">
+            <li>Billing rates</li>
+            <li>Customer phone numbers and email addresses</li>
+            <li>Access codes (lockbox codes, gate codes, keys)</li>
+            <li>Internal office memos</li>
+          </ul>
+          <p className="mt-3">
+            <em>Note: View modes are display-only. All data is loaded in the browser regardless of the selected view mode.
+            This feature is designed for convenience when sharing screens or providing limited-access views, not for security.</em>
           </p>
         </CardContent>
       </Card>

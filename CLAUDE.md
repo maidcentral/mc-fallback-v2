@@ -44,8 +44,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. **Multi-Team Jobs**: Jobs can belong to multiple teams via `scheduledTeams[]` array
 4. **Unassigned Jobs**: Jobs with empty `ScheduledTeams[]` assign to special "Unassigned" team (id: "0")
 5. **Contact Info**: Prefer Cell Phone (ContactTypeId=2), fallback to Home Phone (ContactTypeId=1); Email is ContactTypeId=3
-6. **Privacy**: Global toggle to hide billRate and contactInfo throughout app
-7. **Export**: No email sending capability - generate PDF/PNG for manual distribution
+6. **View Modes**: Two-mode system - Office View (shows all data) vs Technician View (respects privacy toggles)
+7. **Privacy**: Privacy toggle hides sensitive data (billRate, contactInfo, accessInformation, internalMemo) when in Technician View
+8. **Export**: No email sending capability - generate PDF/PNG for manual distribution
+
+### View Modes & Privacy System
+
+**Office View** (default):
+- Shows ALL data regardless of privacy toggle state
+- Intended for office staff managing schedules
+- Access to billing rates, customer contacts, access codes, internal memos
+- Toggle available in header (desktop & mobile)
+
+**Technician View**:
+- Respects "Hide Sensitive Information" privacy toggle
+- Intended for field technicians viewing their assignments
+- When privacy enabled, hides:
+  - `billRate` - Billing/rate information
+  - `contactInfo.phone` - Customer phone numbers
+  - `contactInfo.email` - Customer email addresses
+  - `accessInformation` - Lockbox codes, gate codes, keys (CRITICAL)
+  - `internalMemo` - Internal office notes
+- Non-sensitive fields always shown:
+  - Customer name, address
+  - Service type, scope of work
+  - Schedule times, team assignments
+  - General instructions (special, pet, directions, equipment, waste)
+
+**Implementation**:
+- View mode stored in localStorage (`mc_backup_user_prefs`)
+- Privacy toggle only affects Technician View
+- Helper function: `shouldHideField(viewMode, hideInfo)` returns true if field should be hidden
+- Pattern: `if (!shouldHideField(viewMode, hideInfo)) { /* show sensitive field */ }`
 
 ### Component Architecture
 
@@ -65,19 +95,20 @@ App.js (root)
 
 ### Data Layer
 
-**LocalStorage Key**: `mc_backup_data`
-- Single key stores entire transformed dataset
-- No versioning/migration strategy yet
-- No size limit handling (assumes < 5MB data)
+**LocalStorage Keys**:
+- `mc_backup_data`: Entire transformed dataset
+- `mc_backup_user_prefs`: User preferences (viewMode, hideInfo)
 
 **Utilities**:
 - `storage.js`: Simple wrapper around localStorage (save, load, clear, exists)
 - `dataTransform.js`: Transform Format A → internal format
 - `exportHelpers.js`: html2canvas + jsPDF for PDF/PNG generation
 - `teamPositions.js`: Map TeamPosition IDs (1,2,3...) to names/colors
+- `userPreferences.js`: User preferences storage (viewMode, privacy toggles)
 
-**Hook**:
+**Hooks**:
 - `usePersistedData.js`: Load on mount, provide save/clear functions
+- `useUserPreferences.js`: Manage view mode and privacy settings
 
 ---
 

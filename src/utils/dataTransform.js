@@ -408,6 +408,9 @@ export function transformDRAllData(jsonData) {
   // Extract list of companies
   const companies = extractCompanies(jsonData.Result.ServiceCompanyGroups)
 
+  // Extract FeatureToggles from companies
+  const featureToggles = extractFeatureToggles(jsonData.Result.ServiceCompanyGroups)
+
   // Flatten the hierarchical structure to get all jobs
   const jobs = flattenDRAllDataJobs(jsonData.Result.ServiceCompanyGroups)
 
@@ -424,7 +427,7 @@ export function transformDRAllData(jsonData) {
   const employees = extractEmployees(jobs)
 
   // Calculate metadata (with DR-specific data)
-  const metadata = calculateMetadataDR(transformedJobs, teams, employees, jsonData.Result, companyName)
+  const metadata = calculateMetadataDR(transformedJobs, teams, employees, jsonData.Result, companyName, featureToggles)
 
   return {
     metadata,
@@ -483,6 +486,29 @@ function extractCompanies(serviceCompanyGroups) {
   })
 
   return companies
+}
+
+/**
+ * Extract FeatureToggles from service company groups
+ * Merges FeatureToggles from all companies, using first company's values for conflicts
+ * @param {Array} serviceCompanyGroups - Array of service company group objects
+ * @returns {Object} - Merged FeatureToggles object
+ */
+function extractFeatureToggles(serviceCompanyGroups) {
+  const featureToggles = {}
+
+  serviceCompanyGroups.forEach(group => {
+    if (Array.isArray(group.ServiceCompanies)) {
+      group.ServiceCompanies.forEach(company => {
+        if (company.FeatureToggles) {
+          // Merge feature toggles, first company wins for conflicts
+          Object.assign(featureToggles, company.FeatureToggles)
+        }
+      })
+    }
+  })
+
+  return featureToggles
 }
 
 /**
@@ -638,9 +664,10 @@ function extractInstructionsDR(job) {
  * @param {Array} employees - Employees array
  * @param {Object} resultData - Original Result object from DR format
  * @param {string} companyName - Extracted company name
+ * @param {Object} featureToggles - Extracted FeatureToggles
  * @returns {Object} - Metadata object
  */
-function calculateMetadataDR(jobs, teams, employees, resultData, companyName) {
+function calculateMetadataDR(jobs, teams, employees, resultData, companyName, featureToggles) {
   // Use provided date range if available
   let startDate = ''
   let endDate = ''
@@ -678,6 +705,7 @@ function calculateMetadataDR(jobs, teams, employees, resultData, companyName) {
       totalJobs: jobs.length,
       totalTeams: teams.length - 1, // Exclude "Unassigned" team from count
       totalEmployees: employees.length
-    }
+    },
+    featureToggles: featureToggles || {}
   }
 }

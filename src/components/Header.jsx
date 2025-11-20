@@ -1,13 +1,15 @@
 import { Link, useLocation } from 'react-router-dom'
 import { cn } from '@/lib/utils'
+import { Button } from './ui/button'
 
-export default function Header() {
+export default function Header({ viewMode, setViewMode }) {
   const location = useLocation()
 
   const navLinks = [
     { path: '/', label: 'Dashboard' },
     { path: '/jobs', label: 'Job Calendar' },
     { path: '/employees', label: 'Employee Schedule' },
+    { path: '/teams', label: 'Teams' },
     { path: '/export', label: 'Export' },
     { path: '/admin', label: 'Admin' },
     { path: '/docs', label: 'Documentation' }
@@ -42,11 +44,52 @@ export default function Header() {
           </nav>
         </div>
 
+        {/* View Mode Toggle */}
+        <div className="ml-auto flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-2 px-3 py-1 rounded-md bg-muted">
+            <Button
+              variant={viewMode === 'office' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('office')}
+              className="h-7"
+            >
+              Office View
+            </Button>
+            <Button
+              variant={viewMode === 'technician' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('technician')}
+              className="h-7"
+            >
+              Technician View
+            </Button>
+          </div>
+        </div>
+
         {/* Mobile navigation */}
         <div className="flex flex-1 items-center justify-between space-x-2 md:hidden">
           <Link to="/" className="flex items-center space-x-2">
             <span className="font-bold">MaidCentral Backup</span>
           </Link>
+          {/* Mobile View Mode Toggle */}
+          <div className="flex items-center gap-1">
+            <Button
+              variant={viewMode === 'office' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('office')}
+              className="h-7 text-xs px-2"
+            >
+              Office
+            </Button>
+            <Button
+              variant={viewMode === 'technician' ? 'default' : 'ghost'}
+              size="sm"
+              onClick={() => setViewMode('technician')}
+              className="h-7 text-xs px-2"
+            >
+              Tech
+            </Button>
+          </div>
         </div>
       </div>
     </header>

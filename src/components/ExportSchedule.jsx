@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { format } from 'date-fns'
 import html2canvas from 'html2canvas'
 import jsPDF from 'jspdf'
@@ -7,10 +8,13 @@ import { Alert, AlertDescription } from './ui/alert'
 import { Select } from './ui/select'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
+import { Input } from './ui/input'
+import { Switch, Label } from './ui/switch'
+import { shouldHideField } from '../utils/userPreferences'
 
-export default function ExportSchedule({ data, hideInfo }) {
+export default function ExportSchedule({ data, viewMode, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany }) {
+  const navigate = useNavigate()
   const [selectedTeam, setSelectedTeam] = useState('')
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
   const [isExporting, setIsExporting] = useState(false)
   const previewRef = useRef(null)
 
@@ -34,13 +38,28 @@ export default function ExportSchedule({ data, hideInfo }) {
   // Filter employees for selected team and date
   const teamEmployees = selectedTeam ? data.employees.filter(emp => {
     if (emp.teamId !== selectedTeam) return false
+
+    // Filter by company - employee must have at least one shift for a job in the selected company
+    if (selectedCompany !== 'all') {
+      const hasShiftInCompany = emp.shifts.some(shift => {
+        const job = data.jobs.find(j => j.id === shift.jobId)
+        return job && job.companyId === selectedCompany && shift.date === selectedDate
+      })
+      if (!hasShiftInCompany) return false
+    }
+
     return emp.shifts?.some(shift => shift.date === selectedDate)
   }) : []
 
   // Filter jobs for selected team and date
   const teamJobs = selectedTeam ? data.jobs.filter(job => {
     if (job.schedule.date !== selectedDate) return false
-    return job.scheduledTeams.includes(selectedTeam)
+    if (!job.scheduledTeams.includes(selectedTeam)) return false
+
+    // Filter by company
+    if (selectedCompany !== 'all' && job.companyId !== selectedCompany) return false
+
+    return true
   }) : []
 
   // Calculate total hours for an employee
@@ -136,9 +155,28 @@ export default function ExportSchedule({ data, hideInfo }) {
       {/* Controls */}
       <Card className="p-4">
         <div className="flex flex-wrap items-center gap-4">
+          {/* Company Filter - only show if multiple companies */}
+          {data.companies && data.companies.length > 1 && (
+            <div className="flex items-center gap-2">
+              <Label>Company:</Label>
+              <Select
+                value={selectedCompany}
+                onChange={(e) => setSelectedCompany(e.target.value)}
+                className="w-[200px]"
+              >
+                <option value="all">All Companies</option>
+                {data.companies.map(company => (
+                  <option key={company.id} value={company.id}>
+                    {company.name}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          )}
+
           {/* Team Selection */}
           <div className="flex items-center gap-2">
-            <label className="font-medium">Team:</label>
+            <Label>Team:</Label>
             <Select
               value={selectedTeam}
               onChange={(e) => setSelectedTeam(e.target.value)}
@@ -155,13 +193,23 @@ export default function ExportSchedule({ data, hideInfo }) {
 
           {/* Date Selection */}
           <div className="flex items-center gap-2">
-            <label className="font-medium">Date:</label>
-            <input
+            <Label>Date:</Label>
+            <Input
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="px-3 py-2 border rounded-md"
+              className="w-[160px]"
             />
+          </div>
+
+          {/* Privacy Toggle */}
+          <div className="flex items-center gap-2">
+            <Switch
+              id="hide-info-export"
+              checked={hideInfo}
+              onCheckedChange={setHideInfo}
+            />
+            <Label htmlFor="hide-info-export">Hide Sensitive Information</Label>
           </div>
 
           {/* Export Buttons */}
@@ -240,10 +288,14 @@ export default function ExportSchedule({ data, hideInfo }) {
                 </h3>
                 <div className="space-y-4">
                   {teamJobs.map(job => (
-                    <div key={job.id} className="border rounded-lg p-4">
+                    <div
+                      key={job.id}
+                      className="border rounded-lg p-4 hover:shadow-md hover:border-gray-400 transition-all cursor-pointer"
+                      onClick={() => navigate(`/jobs/${job.id}`)}
+                    >
                       <div className="flex items-start justify-between mb-2">
                         <div>
-                          <h4 className="font-semibold text-lg">{job.customerName}</h4>
+                          <h4 className="font-semibold text-lg hover:text-blue-600">{job.customerName}</h4>
                           <p className="text-sm text-gray-600">{job.serviceType}</p>
                         </div>
                         <Badge>{job.schedule.startTime} - {job.schedule.endTime}</Badge>
@@ -252,7 +304,7 @@ export default function ExportSchedule({ data, hideInfo }) {
                       <div className="text-sm space-y-1">
                         <p><strong>Address:</strong> {job.address}</p>
 
-                        {!hideInfo && job.contactInfo && (job.contactInfo.phone || job.contactInfo.email) && (
+                        {!shouldHideField(viewMode, hideInfo, 'contactInfo', data.metadata?.featureToggles) && job.contactInfo && (job.contactInfo.phone || job.contactInfo.email) && (
                           <p>
                             <strong>Contact:</strong>{' '}
                             {job.contactInfo.phone && `Phone: ${job.contactInfo.phone}`}
@@ -261,23 +313,15 @@ export default function ExportSchedule({ data, hideInfo }) {
                           </p>
                         )}
 
-                        {!hideInfo && job.billRate && (
+                        {!shouldHideField(viewMode, hideInfo, 'billRate', data.metadata?.featureToggles) && job.billRate && (
                           <p><strong>Rate:</strong> ${job.billRate}</p>
                         )}
 
                         {job.tags && job.tags.length > 0 && (
-                          <p><strong>Tags:</strong> {job.tags.join(', ')}</p>
+                          <p><strong>Tags:</strong> {job.tags.map(tag => tag.description || tag).join(', ')}</p>
                         )}
 
-                        {job.instructions && (
-                          <div className="mt-2 pt-2 border-t">
-                            <strong>Instructions:</strong>
-                            <div
-                              className="text-sm mt-1 text-gray-700"
-                              dangerouslySetInnerHTML={{ __html: job.instructions }}
-                            />
-                          </div>
-                        )}
+                        {renderJobInstructions(job, viewMode, hideInfo, data.metadata?.featureToggles)}
                       </div>
                     </div>
                   ))}
@@ -308,6 +352,61 @@ export default function ExportSchedule({ data, hideInfo }) {
           </Alert>
         </Card>
       )}
+    </div>
+  )
+}
+
+// Helper function to render job instructions with privacy filtering
+function renderJobInstructions(job, viewMode, hideInfo, featureToggles) {
+  const hideField = shouldHideField(viewMode, hideInfo, null, featureToggles)
+
+  // Build instructions array with all non-sensitive instructions
+  const instructions = []
+
+  if (job.eventInstructions) {
+    instructions.push({ label: 'Event', content: job.eventInstructions })
+  }
+  if (job.specialInstructions) {
+    instructions.push({ label: 'Special', content: job.specialInstructions })
+  }
+  if (job.petInstructions) {
+    instructions.push({ label: 'Pets', content: job.petInstructions })
+  }
+  if (job.directions) {
+    instructions.push({ label: 'Directions', content: job.directions })
+  }
+  if (job.specialEquipment) {
+    instructions.push({ label: 'Equipment', content: job.specialEquipment })
+  }
+  if (job.wasteInfo) {
+    instructions.push({ label: 'Waste', content: job.wasteInfo })
+  }
+
+  // Add sensitive instructions only in office view
+  if (!hideField) {
+    if (job.accessInformation) {
+      instructions.push({ label: 'Access', content: job.accessInformation })
+    }
+    if (job.internalMemo) {
+      instructions.push({ label: 'Internal Memo', content: job.internalMemo })
+    }
+  }
+
+  if (instructions.length === 0) {
+    return null
+  }
+
+  return (
+    <div className="mt-2 pt-2 border-t">
+      <strong>Instructions:</strong>
+      <div className="text-sm mt-1 text-gray-700 space-y-1">
+        {instructions.map((inst, idx) => (
+          <div key={idx}>
+            <strong className="text-xs text-gray-500">{inst.label}:</strong>{' '}
+            <span dangerouslySetInnerHTML={{ __html: inst.content }} />
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
