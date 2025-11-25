@@ -21,13 +21,36 @@ function App() {
   const [selectedCompany, setSelectedCompany] = useState('all')
   const [selectedTeam, setSelectedTeam] = useState('all')
 
-  // Debug logging
-  console.log('App.jsx - data exists:', !!data)
-  console.log('App.jsx - data.metadata exists:', !!data?.metadata)
-  console.log('App.jsx - data.metadata.featureToggles exists:', !!data?.metadata?.featureToggles)
-  console.log('App.jsx - featureToggles:', data?.metadata?.featureToggles)
-  console.log('App.jsx - metadata.dataFormat:', data?.metadata?.dataFormat)
-  console.log('App.jsx - metadata.lastUpdated:', data?.metadata?.lastUpdated)
+  // Initialize featureToggles if missing (for testing with old data)
+  const [debugToggles, setDebugToggles] = useState(() => {
+    if (!data?.metadata?.featureToggles || Object.keys(data.metadata.featureToggles).length === 0) {
+      return {
+        TechDashboard_DisplayBillRate: false,
+        TechDashboard_DisplayFeeSplitRate: true,
+        TechDashboard_DisplayAddOnRate: true,
+        TechDashboard_DisplayRoomRate: true,
+        TechDashboard_DisplayCustomerPhoneNumbers: false,
+        TechDashboard_DisplayCustomerEmails: false
+      }
+    }
+    return data.metadata.featureToggles
+  })
+
+  // Update data with debug toggles
+  const dataWithToggles = data ? {
+    ...data,
+    metadata: {
+      ...data.metadata,
+      featureToggles: debugToggles
+    }
+  } : null
+
+  const toggleFeature = (key) => {
+    setDebugToggles(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }))
+  }
 
   return (
     <Router>
@@ -35,16 +58,16 @@ function App() {
         <Header viewMode={viewMode} setViewMode={setViewMode} />
         <main className="flex-1 container mx-auto px-4 py-8 max-w-7xl">
           <Routes>
-            <Route path="/" element={<Dashboard data={data} />} />
+            <Route path="/" element={<Dashboard data={dataWithToggles} />} />
             <Route
               path="/admin"
-              element={<Admin data={data} saveData={saveData} clearData={clearData} />}
+              element={<Admin data={dataWithToggles} saveData={saveData} clearData={clearData} />}
             />
             <Route
               path="/jobs"
               element={
                 <JobCalendar
-                  data={data}
+                  data={dataWithToggles}
                   viewMode={viewMode}
                   hideInfo={hideInfo}
                   setHideInfo={setHideInfo}
@@ -61,7 +84,7 @@ function App() {
               path="/employees"
               element={
                 <EmployeeCalendar
-                  data={data}
+                  data={dataWithToggles}
                   viewMode={viewMode}
                   hideInfo={hideInfo}
                   setHideInfo={setHideInfo}
@@ -78,7 +101,7 @@ function App() {
               path="/export"
               element={
                 <ExportSchedule
-                  data={data}
+                  data={dataWithToggles}
                   viewMode={viewMode}
                   hideInfo={hideInfo}
                   setHideInfo={setHideInfo}
@@ -93,7 +116,7 @@ function App() {
               path="/teams"
               element={
                 <TeamList
-                  data={data}
+                  data={dataWithToggles}
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
                   selectedCompany={selectedCompany}
@@ -105,7 +128,7 @@ function App() {
               path="/teams/:teamId"
               element={
                 <TeamDetail
-                  data={data}
+                  data={dataWithToggles}
                   viewMode={viewMode}
                   hideInfo={hideInfo}
                   selectedDate={selectedDate}
@@ -119,7 +142,7 @@ function App() {
               path="/jobs/:jobId"
               element={
                 <JobView
-                  data={data}
+                  data={dataWithToggles}
                   viewMode={viewMode}
                   hideInfo={hideInfo}
                   setHideInfo={setHideInfo}
@@ -132,7 +155,7 @@ function App() {
         <Footer />
 
         {/* Debug Panel - Floating */}
-        {data?.metadata?.featureToggles && (
+        {data && (
           <div className="fixed bottom-4 right-4 bg-slate-900 text-white p-4 rounded-lg shadow-2xl border border-slate-700 max-w-sm text-xs font-mono z-50">
             <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-600">
               <h3 className="font-bold text-sm">🔧 Feature Toggles Debug</h3>
@@ -147,16 +170,20 @@ function App() {
 
             <div className="space-y-1">
               <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1">
-                From Uploaded Data:
+                Feature Toggles (click to toggle):
               </div>
-              {Object.entries(data.metadata.featureToggles)
+              {Object.entries(debugToggles)
                 .filter(([key]) => key.startsWith('TechDashboard_Display'))
                 .map(([key, value]) => (
-                  <div key={key} className="flex items-center justify-between py-1">
+                  <div
+                    key={key}
+                    className="flex items-center justify-between py-1 cursor-pointer hover:bg-slate-800 px-2 rounded"
+                    onClick={() => toggleFeature(key)}
+                  >
                     <span className="text-slate-300 truncate mr-2">
                       {key.replace('TechDashboard_Display', '')}:
                     </span>
-                    <span className={`px-2 py-0.5 rounded font-semibold ${
+                    <span className={`px-2 py-0.5 rounded font-semibold transition-colors ${
                       value
                         ? 'bg-green-600 text-white'
                         : 'bg-red-600 text-white'

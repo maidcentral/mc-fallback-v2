@@ -237,25 +237,160 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
               </h2>
               <div className="flex flex-wrap gap-2">
                 {job.tags.map((tag, idx) => (
-                  <Badge key={idx} variant="outline">
+                  <Badge
+                    key={idx}
+                    variant="outline"
+                    style={{
+                      borderColor: tag.color || '#999999',
+                      color: tag.color || '#999999'
+                    }}
+                  >
                     {tag.description || tag}
+                    {tag.type && (
+                      <span className="ml-1 text-[10px] opacity-60">
+                        ({tag.type})
+                      </span>
+                    )}
                   </Badge>
                 ))}
               </div>
             </div>
           )}
 
+          {/* Rooms Section - Grouped by Type */}
+          {job.rooms && job.rooms.length > 0 && (() => {
+            // Group rooms by type
+            const roomsByType = job.rooms.reduce((acc, room) => {
+              const type = room.type || 'Other'
+              if (!acc[type]) {
+                acc[type] = []
+              }
+              acc[type].push(room)
+              return acc
+            }, {})
+
+            // Find rooms needing DC based on DC code logic:
+            // - "always" → always highlight
+            // - "never" → never highlight
+            // - "rotate" or other → highlight oldest by date
+            const roomsNeedingDC = {}
+            Object.keys(roomsByType).forEach(type => {
+              const needsDC = []
+
+              roomsByType[type].forEach(room => {
+                const dcCode = room.deepCleanCode ? room.deepCleanCode.toLowerCase() : ''
+
+                // DC Code "always" - always highlight
+                if (dcCode === 'always') {
+                  needsDC.push(room)
+                }
+                // DC Code "never" - never highlight (skip)
+                else if (dcCode === 'never') {
+                  // Do nothing
+                }
+                // DC Code "rotate" or other - use oldest date logic
+                else if (room.lastDeepCleanDate) {
+                  // Add to candidate list for oldest check
+                  if (!needsDC.some(r => r.deepCleanCode && r.deepCleanCode.toLowerCase() === 'always')) {
+                    // Only track oldest if we haven't already found an "always" room
+                    if (needsDC.length === 0 || new Date(room.lastDeepCleanDate) < new Date(needsDC[0].lastDeepCleanDate)) {
+                      needsDC.splice(0, needsDC.length, room) // Replace with older room
+                    }
+                  }
+                }
+              })
+
+              roomsNeedingDC[type] = needsDC
+            })
+
+            // Define order for room types
+            const typeOrder = ['Wet', 'Dry', 'Other']
+            const sortedTypes = typeOrder.filter(type => roomsByType[type])
+
+            return (
+              <div className="mb-6">
+                <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
+                  🏠 Rooms ({job.rooms.length})
+                </h2>
+
+                {sortedTypes.map(type => {
+                  const needsDCRooms = roomsNeedingDC[type] || []
+
+                  return (
+                    <div key={type} className="mb-4">
+                      <h3 className="text-sm font-semibold text-gray-600 mb-2">{type} Rooms</h3>
+                      <div className="space-y-2">
+                        {roomsByType[type].map((room, idx) => {
+                          const needsDC = needsDCRooms.some(r =>
+                            r.name === room.name &&
+                            r.lastDeepCleanDate === room.lastDeepCleanDate &&
+                            r.deepCleanCode === room.deepCleanCode
+                          )
+
+                          return (
+                            <div
+                              key={idx}
+                              className={`border-l-2 pl-3 text-sm ${
+                                needsDC
+                                  ? 'border-orange-500 bg-orange-50'
+                                  : 'border-gray-300'
+                              }`}
+                            >
+                              <div className="flex items-start justify-between">
+                                <div className="flex items-center gap-2">
+                                  <strong className="text-gray-700">{room.name}</strong>
+                                  {needsDC && (
+                                    <span className="text-xs bg-orange-500 text-white px-2 py-0.5 rounded font-semibold">
+                                      NEEDS DC
+                                    </span>
+                                  )}
+                                </div>
+                                {!shouldHideField(viewMode, hideInfo, 'roomRate', data.metadata?.featureToggles) && room.fee > 0 && (
+                                  <span className="text-gray-600 font-medium">${room.fee.toFixed(2)}</span>
+                                )}
+                              </div>
+                              {room.detailsOfWork && (
+                                <p className="text-gray-600 mt-1">{room.detailsOfWork}</p>
+                              )}
+                              {(room.lastDeepCleanDate || room.deepCleanCode) && (
+                                <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                                  {room.lastDeepCleanDate && (
+                                    <p>
+                                      <strong>Last DC:</strong> {format(new Date(room.lastDeepCleanDate), 'MMM d, yyyy')}
+                                    </p>
+                                  )}
+                                  {room.deepCleanCode && (
+                                    <p>
+                                      <strong>DC Code:</strong> {room.deepCleanCode}
+                                    </p>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+
           {/* Contact Information Section */}
-          {!shouldHideField(viewMode, hideInfo, 'contactInfo', data.metadata?.featureToggles) && job.contactInfo && (job.contactInfo.phone || job.contactInfo.email) && (
+          {job.contactInfo && (
+            (!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
+            (!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email)
+          ) && (
             <div className="mb-6">
               <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
                 📞 Contact Information
               </h2>
               <div className="space-y-1 text-sm">
-                {job.contactInfo.phone && (
+                {!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone && (
                   <p><strong>Phone:</strong> {job.contactInfo.phone}</p>
                 )}
-                {job.contactInfo.email && (
+                {!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && (
                   <p><strong>Email:</strong> {job.contactInfo.email}</p>
                 )}
               </div>
@@ -268,7 +403,101 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
               <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
                 💰 Bill Rate
               </h2>
-              <p className="text-sm">${job.billRate}</p>
+              <p className="text-sm">${job.billRate.toFixed(2)}</p>
+            </div>
+          )}
+
+          {/* Fee Split Rate Section */}
+          {!shouldHideField(viewMode, hideInfo, 'feeSplitRate', data.metadata?.featureToggles) && (job.baseFee || job.serviceSetRateMods?.length > 0 || job.jobRateMods?.length > 0) && (() => {
+            // Calculate fee split rate (sum of amounts where FeeSplit is true)
+            let feeSplitTotal = 0
+            if (job.baseFee?.FeeSplit) {
+              feeSplitTotal += job.baseFee.Amount || 0
+            }
+            if (job.serviceSetRateMods) {
+              job.serviceSetRateMods.forEach(mod => {
+                if (mod.FeeSplit) {
+                  feeSplitTotal += mod.Amount || 0
+                }
+              })
+            }
+            if (job.jobRateMods) {
+              job.jobRateMods.forEach(mod => {
+                if (mod.FeeSplit) {
+                  feeSplitTotal += mod.Amount || 0
+                }
+              })
+            }
+            return feeSplitTotal > 0 ? (
+              <div className="mb-6">
+                <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
+                  🤝 Fee Split Rate
+                </h2>
+                <p className="text-sm">${feeSplitTotal.toFixed(2)}</p>
+              </div>
+            ) : null
+          })()}
+
+          {/* Rate Breakdown Section */}
+          {(job.baseFee || job.serviceSetRateMods?.length > 0 || job.jobRateMods?.length > 0) && (
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
+                📋 Rate Breakdown
+              </h2>
+
+              {/* Base Fee */}
+              {job.baseFee && (
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-gray-600 mb-2">Base Fee</h3>
+                  <div className="text-sm ml-2">
+                    • {job.baseFee.Name}
+                    {!shouldHideField(viewMode, hideInfo, 'addOnRate', data.metadata?.featureToggles) && (
+                      <span>: ${job.baseFee.Amount.toFixed(2)}</span>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Recurring Modifiers (ServiceSetRateMods) */}
+              {job.serviceSetRateMods && job.serviceSetRateMods.length > 0 && (
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-gray-600 mb-2">Recurring Modifiers</h3>
+                  <div className="text-sm ml-2 space-y-1">
+                    {job.serviceSetRateMods.map((mod, idx) => (
+                      <div key={idx}>
+                        • {mod.Name}
+                        {!shouldHideField(viewMode, hideInfo, 'addOnRate', data.metadata?.featureToggles) && (
+                          <span>: ${mod.Amount.toFixed(2)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* One-Time Modifiers (JobRateMods) */}
+              {job.jobRateMods && job.jobRateMods.length > 0 ? (
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-gray-600 mb-2">One-Time Modifiers</h3>
+                  <div className="text-sm ml-2 space-y-1">
+                    {job.jobRateMods.map((mod, idx) => (
+                      <div key={idx}>
+                        • {mod.Name}
+                        {!shouldHideField(viewMode, hideInfo, 'addOnRate', data.metadata?.featureToggles) && (
+                          <span>: ${mod.Amount.toFixed(2)}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="mb-4">
+                  <h3 className="text-sm font-semibold text-gray-600 mb-2">One-Time Modifiers</h3>
+                  <div className="text-sm ml-2 text-gray-400 italic">
+                    (No one-time modifiers)
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

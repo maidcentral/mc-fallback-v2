@@ -230,7 +230,7 @@ function extractContactInfo(contactInfos) {
 }
 
 /**
- * Extract and combine tags from job, home, and customer
+ * Extract and combine tags from job, service set, home, and customer
  * @param {Object} job - Raw job object
  * @returns {Array} - Array of tag objects
  */
@@ -242,6 +242,18 @@ function extractTags(job) {
     job.JobTags.forEach(tag => {
       allTags.push({
         type: 'job',
+        description: tag.Description || '',
+        icon: tag.IconPath || '',
+        color: tag.Color || '#999999'
+      })
+    })
+  }
+
+  // Service Set tags
+  if (Array.isArray(job.ServiceSetTags)) {
+    job.ServiceSetTags.forEach(tag => {
+      allTags.push({
+        type: 'serviceSet',
         description: tag.Description || '',
         icon: tag.IconPath || '',
         color: tag.Color || '#999999'
@@ -274,6 +286,27 @@ function extractTags(job) {
   }
 
   return allTags
+}
+
+/**
+ * Extract and transform rooms from job
+ * @param {Array} roomsArray - Array of room objects
+ * @returns {Array} - Array of transformed room objects
+ */
+function extractRooms(roomsArray) {
+  if (!Array.isArray(roomsArray) || roomsArray.length === 0) {
+    return []
+  }
+
+  return roomsArray.map(room => ({
+    name: room.RoomName || '',
+    location: room.LocationInHome || '',
+    type: room.RoomTypeName || 'Other',
+    deepCleanCode: room.DCCodeDescription || '',
+    lastDeepCleanDate: room.LastDCDate || '',
+    detailsOfWork: room.DetailsOfWork || '',
+    fee: room.RoomFee || 0
+  }))
 }
 
 /**
@@ -593,6 +626,9 @@ function transformJobDR(job) {
   // Extract tags
   const tags = extractTags(job)
 
+  // Extract rooms
+  const rooms = extractRooms(job.Rooms)
+
   // Extract scheduled teams
   const scheduledTeams = extractScheduledTeams(job.ScheduledTeams)
 
@@ -609,11 +645,16 @@ function transformJobDR(job) {
     address,
     ...instructions,
     tags,
+    rooms,
     scheduledTeams,
     schedule,
     // Use BillRate if available, fallback to BaseFeeLog.Amount
     billRate: job.BillRate || job.BaseFeeLog?.Amount || 0,
-    contactInfo
+    contactInfo,
+    // Rate breakdown fields
+    baseFee: job.BaseFeeLog || null,
+    serviceSetRateMods: job.ServiceSetRateMods || [],
+    jobRateMods: job.JobRateMods || []
   }
 }
 

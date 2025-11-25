@@ -77,7 +77,9 @@ const FIELD_TO_FEATURE_TOGGLE = {
   billRate: 'TechDashboard_DisplayBillRate',
   feeSplitRate: 'TechDashboard_DisplayFeeSplitRate',
   addOnRate: 'TechDashboard_DisplayAddOnRate',
-  roomRate: 'TechDashboard_DisplayRoomRate'
+  roomRate: 'TechDashboard_DisplayRoomRate',
+  customerPhone: 'TechDashboard_DisplayCustomerPhoneNumbers',
+  customerEmail: 'TechDashboard_DisplayCustomerEmails'
 }
 
 /**

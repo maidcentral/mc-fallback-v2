@@ -404,17 +404,15 @@ function generateShiftTooltipHTML(employee, shift, job, viewMode, hideInfo, feat
 
 // Generate contact info HTML
 function getContactInfoHTML(job, viewMode, hideInfo, featureToggles) {
-  const hideField = shouldHideField(viewMode, hideInfo, 'contactInfo', featureToggles)
-
-  if (hideField || !job.contactInfo) {
+  if (!job.contactInfo) {
     return ''
   }
 
   const contactParts = []
-  if (job.contactInfo.phone) {
+  if (!shouldHideField(viewMode, hideInfo, 'customerPhone', featureToggles) && job.contactInfo.phone) {
     contactParts.push(`Phone: ${job.contactInfo.phone}`)
   }
-  if (job.contactInfo.email) {
+  if (!shouldHideField(viewMode, hideInfo, 'customerEmail', featureToggles) && job.contactInfo.email) {
     contactParts.push(`Email: ${job.contactInfo.email}`)
   }
 

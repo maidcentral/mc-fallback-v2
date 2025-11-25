@@ -304,12 +304,16 @@ export default function ExportSchedule({ data, viewMode, hideInfo, setHideInfo, 
                       <div className="text-sm space-y-1">
                         <p><strong>Address:</strong> {job.address}</p>
 
-                        {!shouldHideField(viewMode, hideInfo, 'contactInfo', data.metadata?.featureToggles) && job.contactInfo && (job.contactInfo.phone || job.contactInfo.email) && (
+                        {job.contactInfo && (
+                          (!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
+                          (!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email)
+                        ) && (
                           <p>
                             <strong>Contact:</strong>{' '}
-                            {job.contactInfo.phone && `Phone: ${job.contactInfo.phone}`}
-                            {job.contactInfo.phone && job.contactInfo.email && ', '}
-                            {job.contactInfo.email && `Email: ${job.contactInfo.email}`}
+                            {!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone && `Phone: ${job.contactInfo.phone}`}
+                            {!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone &&
+                             !shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && ', '}
+                            {!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && `Email: ${job.contactInfo.email}`}
                           </p>
                         )}
 

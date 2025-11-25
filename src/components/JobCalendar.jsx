@@ -380,13 +380,11 @@ function generateTooltipHTML(job, teams, hideInfo) {
   }
 
   // Add contact info if not hidden
-  if (!shouldHideField(viewMode, hideInfo, 'contactInfo', featureToggles)) {
-    if (job.contactInfo.phone) {
-      html += `<div><strong>Phone:</strong> ${job.contactInfo.phone}</div>`
-    }
-    if (job.contactInfo.email) {
-      html += `<div><strong>Email:</strong> ${job.contactInfo.email}</div>`
-    }
+  if (!shouldHideField(viewMode, hideInfo, 'customerPhone', featureToggles) && job.contactInfo.phone) {
+    html += `<div><strong>Phone:</strong> ${job.contactInfo.phone}</div>`
+  }
+  if (!shouldHideField(viewMode, hideInfo, 'customerEmail', featureToggles) && job.contactInfo.email) {
+    html += `<div><strong>Email:</strong> ${job.contactInfo.email}</div>`
   }
 
   // Add tags
