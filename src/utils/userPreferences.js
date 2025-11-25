@@ -1,7 +1,7 @@
 /**
  * User Preferences Storage Utility
  * Manages user preferences separately from application data
- * Persists view mode and privacy settings to localStorage
+ * Persists view mode to localStorage
  */
 
 const PREFERENCES_KEY = 'mc_backup_user_prefs'
@@ -11,7 +11,9 @@ const PREFERENCES_KEY = 'mc_backup_user_prefs'
  */
 export const DEFAULT_PREFERENCES = {
   viewMode: 'office', // 'office' | 'technician'
-  hideInfo: false
+  selectedDate: new Date().toISOString().split('T')[0], // ISO date string (YYYY-MM-DD)
+  selectedCompany: 'all',
+  selectedTeam: 'all'
 }
 
 /**
@@ -72,6 +74,7 @@ export function preferencesExist() {
 
 /**
  * Mapping of field names to their corresponding FeatureToggle keys
+ * Note: Some toggles use inverse logic (Hide* instead of Display*)
  */
 const FIELD_TO_FEATURE_TOGGLE = {
   billRate: 'TechDashboard_DisplayBillRate',
@@ -79,43 +82,48 @@ const FIELD_TO_FEATURE_TOGGLE = {
   addOnRate: 'TechDashboard_DisplayAddOnRate',
   roomRate: 'TechDashboard_DisplayRoomRate',
   customerPhone: 'TechDashboard_DisplayCustomerPhoneNumbers',
-  customerEmail: 'TechDashboard_DisplayCustomerEmails'
+  customerEmail: 'TechDashboard_DisplayCustomerEmails',
+  discounts: 'TechDashboard_HideDiscounts', // Inverse logic: true = hide
+  accessInformation: null, // Always respects hideInfo in Technician view (no specific toggle)
+  internalMemo: null // Always respects hideInfo in Technician view (no specific toggle)
 }
 
 /**
  * Helper function to determine if a field should be hidden
- * Office view: Always show (ignore hideInfo and FeatureToggles)
- * Technician view: Check FeatureToggles first, then fallback to hideInfo
+ * Office view: Always show (ignore FeatureToggles)
+ * Technician view: Check FeatureToggles only
  *
  * @param {string} viewMode - Current view mode ('office' | 'technician')
- * @param {boolean} hideInfo - Privacy toggle state
  * @param {string} fieldName - Name of the field (e.g., 'billRate', 'contactInfo')
  * @param {Object} featureToggles - FeatureToggles from uploaded data
  * @returns {boolean} - True if field should be hidden
  */
-export function shouldHideField(viewMode, hideInfo, fieldName = null, featureToggles = null) {
+export function shouldHideField(viewMode, fieldName = null, featureToggles = null) {
   // Office view always shows everything
   if (viewMode === 'office') {
     return false
   }
 
-  // Technician view - check FeatureToggles first if fieldName is provided
+  // Technician view - check FeatureToggles
   if (fieldName && featureToggles) {
     const featureToggleKey = FIELD_TO_FEATURE_TOGGLE[fieldName]
 
     if (featureToggleKey && featureToggleKey in featureToggles) {
-      // If FeatureToggle says "don't display" (false), hide the field
-      // If FeatureToggle says "display" (true), still respect manual hideInfo toggle
-      const shouldDisplay = featureToggles[featureToggleKey]
+      const toggleValue = featureToggles[featureToggleKey]
 
-      if (!shouldDisplay) {
-        // FeatureToggle says don't display - always hide in Technician view
-        return true
+      // Handle inverse logic toggles (Hide* instead of Display*)
+      const isInverseLogic = featureToggleKey.includes('Hide')
+
+      if (isInverseLogic) {
+        // For Hide* toggles: true = hide, false = show
+        return toggleValue === true
+      } else {
+        // For Display* toggles: false = hide, true = show
+        return toggleValue === false
       }
-      // FeatureToggle allows display - fall through to hideInfo check
     }
   }
 
-  // Fallback to manual hideInfo toggle
-  return hideInfo
+  // Default: hide in Technician view if no toggle defined (for accessInformation, internalMemo)
+  return viewMode === 'technician'
 }

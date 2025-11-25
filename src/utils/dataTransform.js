@@ -160,6 +160,7 @@ function transformJob(job) {
     scheduledTeams,
     schedule,
     billRate: job.BillRate || 0,
+    feeSplitRate: job.FeeSplitRate || 0,
     contactInfo
   }
 }
@@ -650,6 +651,7 @@ function transformJobDR(job) {
     schedule,
     // Use BillRate if available, fallback to BaseFeeLog.Amount
     billRate: job.BillRate || job.BaseFeeLog?.Amount || 0,
+    feeSplitRate: job.FeeSplitRate || 0,
     contactInfo,
     // Rate breakdown fields
     baseFee: job.BaseFeeLog || null,

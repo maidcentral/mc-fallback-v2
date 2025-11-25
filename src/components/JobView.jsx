@@ -7,10 +7,9 @@ import { Card } from './ui/card'
 import { Alert, AlertDescription } from './ui/alert'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
-import { Switch, Label } from './ui/switch'
 import { shouldHideField } from '../utils/userPreferences'
 
-export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
+export default function JobView({ data, viewMode }) {
   const { jobId } = useParams()
   const navigate = useNavigate()
   const [isExporting, setIsExporting] = useState(false)
@@ -128,16 +127,6 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
         </Button>
 
         <div className="flex items-center gap-4">
-          {/* Privacy Toggle */}
-          <div className="flex items-center gap-2">
-            <Switch
-              id="hide-info-job"
-              checked={hideInfo}
-              onCheckedChange={setHideInfo}
-            />
-            <Label htmlFor="hide-info-job">Hide Sensitive Information</Label>
-          </div>
-
           {/* Export Buttons */}
           <div className="flex gap-2">
             <Button
@@ -227,7 +216,7 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
           )}
 
           {/* Instructions Section */}
-          {renderJobInstructions(job, viewMode, hideInfo, data.metadata?.featureToggles)}
+          {renderJobInstructions(job, viewMode, data.metadata?.featureToggles)}
 
           {/* Tags Section */}
           {job.tags && job.tags.length > 0 && (
@@ -345,7 +334,7 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
                                     </span>
                                   )}
                                 </div>
-                                {!shouldHideField(viewMode, hideInfo, 'roomRate', data.metadata?.featureToggles) && room.fee > 0 && (
+                                {!shouldHideField(viewMode, 'roomRate', data.metadata?.featureToggles) && room.fee > 0 && (
                                   <span className="text-gray-600 font-medium">${room.fee.toFixed(2)}</span>
                                 )}
                               </div>
@@ -379,18 +368,18 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
 
           {/* Contact Information Section */}
           {job.contactInfo && (
-            (!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
-            (!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email)
+            (!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
+            (!shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email)
           ) && (
             <div className="mb-6">
               <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
                 📞 Contact Information
               </h2>
               <div className="space-y-1 text-sm">
-                {!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone && (
+                {!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone && (
                   <p><strong>Phone:</strong> {job.contactInfo.phone}</p>
                 )}
-                {!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && (
+                {!shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && (
                   <p><strong>Email:</strong> {job.contactInfo.email}</p>
                 )}
               </div>
@@ -398,7 +387,7 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
           )}
 
           {/* Bill Rate Section */}
-          {!shouldHideField(viewMode, hideInfo, 'billRate', data.metadata?.featureToggles) && job.billRate && (
+          {!shouldHideField(viewMode, 'billRate', data.metadata?.featureToggles) && job.billRate && (
             <div className="mb-6">
               <h2 className="text-xl font-semibold mb-3 flex items-center gap-2">
                 💰 Bill Rate
@@ -408,7 +397,7 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
           )}
 
           {/* Fee Split Rate Section */}
-          {!shouldHideField(viewMode, hideInfo, 'feeSplitRate', data.metadata?.featureToggles) && (job.baseFee || job.serviceSetRateMods?.length > 0 || job.jobRateMods?.length > 0) && (() => {
+          {!shouldHideField(viewMode, 'feeSplitRate', data.metadata?.featureToggles) && (job.baseFee || job.serviceSetRateMods?.length > 0 || job.jobRateMods?.length > 0) && (() => {
             // Calculate fee split rate (sum of amounts where FeeSplit is true)
             let feeSplitTotal = 0
             if (job.baseFee?.FeeSplit) {
@@ -451,7 +440,7 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
                   <h3 className="text-sm font-semibold text-gray-600 mb-2">Base Fee</h3>
                   <div className="text-sm ml-2">
                     • {job.baseFee.Name}
-                    {!shouldHideField(viewMode, hideInfo, 'addOnRate', data.metadata?.featureToggles) && (
+                    {!shouldHideField(viewMode, 'addOnRate', data.metadata?.featureToggles) && (
                       <span>: ${job.baseFee.Amount.toFixed(2)}</span>
                     )}
                   </div>
@@ -459,45 +448,61 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
               )}
 
               {/* Recurring Modifiers (ServiceSetRateMods) */}
-              {job.serviceSetRateMods && job.serviceSetRateMods.length > 0 && (
-                <div className="mb-4">
-                  <h3 className="text-sm font-semibold text-gray-600 mb-2">Recurring Modifiers</h3>
-                  <div className="text-sm ml-2 space-y-1">
-                    {job.serviceSetRateMods.map((mod, idx) => (
-                      <div key={idx}>
-                        • {mod.Name}
-                        {!shouldHideField(viewMode, hideInfo, 'addOnRate', data.metadata?.featureToggles) && (
-                          <span>: ${mod.Amount.toFixed(2)}</span>
-                        )}
-                      </div>
-                    ))}
+              {job.serviceSetRateMods && job.serviceSetRateMods.length > 0 && (() => {
+                // Filter out discounts (negative amounts) if TechDashboard_HideDiscounts is true
+                const hideDiscounts = shouldHideField(viewMode, 'discounts', data.metadata?.featureToggles)
+                const visibleMods = hideDiscounts
+                  ? job.serviceSetRateMods.filter(mod => mod.Amount >= 0)
+                  : job.serviceSetRateMods
+
+                return visibleMods.length > 0 ? (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-gray-600 mb-2">Recurring Modifiers</h3>
+                    <div className="text-sm ml-2 space-y-1">
+                      {visibleMods.map((mod, idx) => (
+                        <div key={idx}>
+                          • {mod.Name}
+                          {!shouldHideField(viewMode, 'addOnRate', data.metadata?.featureToggles) && (
+                            <span>: ${mod.Amount.toFixed(2)}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )}
+                ) : null
+              })()}
 
               {/* One-Time Modifiers (JobRateMods) */}
-              {job.jobRateMods && job.jobRateMods.length > 0 ? (
-                <div className="mb-4">
-                  <h3 className="text-sm font-semibold text-gray-600 mb-2">One-Time Modifiers</h3>
-                  <div className="text-sm ml-2 space-y-1">
-                    {job.jobRateMods.map((mod, idx) => (
-                      <div key={idx}>
-                        • {mod.Name}
-                        {!shouldHideField(viewMode, hideInfo, 'addOnRate', data.metadata?.featureToggles) && (
-                          <span>: ${mod.Amount.toFixed(2)}</span>
-                        )}
-                      </div>
-                    ))}
+              {(() => {
+                // Filter out discounts (negative amounts) if TechDashboard_HideDiscounts is true
+                const hideDiscounts = shouldHideField(viewMode, 'discounts', data.metadata?.featureToggles)
+                const visibleMods = job.jobRateMods && job.jobRateMods.length > 0
+                  ? (hideDiscounts ? job.jobRateMods.filter(mod => mod.Amount >= 0) : job.jobRateMods)
+                  : []
+
+                return visibleMods.length > 0 ? (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-gray-600 mb-2">One-Time Modifiers</h3>
+                    <div className="text-sm ml-2 space-y-1">
+                      {visibleMods.map((mod, idx) => (
+                        <div key={idx}>
+                          • {mod.Name}
+                          {!shouldHideField(viewMode, 'addOnRate', data.metadata?.featureToggles) && (
+                            <span>: ${mod.Amount.toFixed(2)}</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="mb-4">
-                  <h3 className="text-sm font-semibold text-gray-600 mb-2">One-Time Modifiers</h3>
-                  <div className="text-sm ml-2 text-gray-400 italic">
-                    (No one-time modifiers)
+                ) : (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-semibold text-gray-600 mb-2">One-Time Modifiers</h3>
+                    <div className="text-sm ml-2 text-gray-400 italic">
+                      (No one-time modifiers)
+                    </div>
                   </div>
-                </div>
-              )}
+                )
+              })()}
             </div>
           )}
 
@@ -512,9 +517,7 @@ export default function JobView({ data, viewMode, hideInfo, setHideInfo }) {
 }
 
 // Helper function to render job instructions with privacy filtering
-function renderJobInstructions(job, viewMode, hideInfo, featureToggles) {
-  const hideField = shouldHideField(viewMode, hideInfo, null, featureToggles)
-
+function renderJobInstructions(job, viewMode, featureToggles) {
   // Build instructions array with all non-sensitive instructions
   const instructions = []
 
@@ -537,11 +540,13 @@ function renderJobInstructions(job, viewMode, hideInfo, featureToggles) {
     instructions.push({ label: 'Waste', content: job.wasteInfo })
   }
 
-  // Add sensitive instructions only in office view
-  if (!hideField) {
+  // Add sensitive instructions with named field privacy checks
+  if (!shouldHideField(viewMode, 'accessInformation', featureToggles)) {
     if (job.accessInformation) {
       instructions.push({ label: 'Access', content: job.accessInformation })
     }
+  }
+  if (!shouldHideField(viewMode, 'internalMemo', featureToggles)) {
     if (job.internalMemo) {
       instructions.push({ label: 'Internal Memo', content: job.internalMemo })
     }

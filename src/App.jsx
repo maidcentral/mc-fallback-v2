@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Header from './components/Header'
 import Footer from './components/Footer'
 import Dashboard from './components/Dashboard'
@@ -16,40 +16,80 @@ import { useUserPreferences } from './hooks/useUserPreferences'
 
 function App() {
   const { data, saveData, clearData } = usePersistedData()
-  const { viewMode, hideInfo, setViewMode, setHideInfo } = useUserPreferences()
-  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
-  const [selectedCompany, setSelectedCompany] = useState('all')
-  const [selectedTeam, setSelectedTeam] = useState('all')
+  const {
+    viewMode,
+    setViewMode,
+    selectedDate,
+    setSelectedDate,
+    selectedCompany,
+    setSelectedCompany,
+    selectedTeam,
+    setSelectedTeam
+  } = useUserPreferences()
 
-  // Initialize featureToggles if missing (for testing with old data)
+  // Initialize featureToggles - load from localStorage or use uploaded data
   const [debugToggles, setDebugToggles] = useState(() => {
+    // Try to load from localStorage first
+    const stored = localStorage.getItem('mc_backup_debug_toggles')
+    if (stored) {
+      try {
+        return JSON.parse(stored)
+      } catch (e) {
+        console.error('Error parsing debug toggles:', e)
+      }
+    }
+
+    // Fallback to uploaded data or defaults
     if (!data?.metadata?.featureToggles || Object.keys(data.metadata.featureToggles).length === 0) {
       return {
-        TechDashboard_DisplayBillRate: false,
+        TechDashboard_DisplayBillRate: true,
         TechDashboard_DisplayFeeSplitRate: true,
         TechDashboard_DisplayAddOnRate: true,
         TechDashboard_DisplayRoomRate: true,
         TechDashboard_DisplayCustomerPhoneNumbers: false,
-        TechDashboard_DisplayCustomerEmails: false
+        TechDashboard_DisplayCustomerEmails: false,
+        TechDashboard_HideDiscounts: false
       }
     }
     return data.metadata.featureToggles
   })
 
-  // Update data with debug toggles
-  const dataWithToggles = data ? {
-    ...data,
-    metadata: {
-      ...data.metadata,
-      featureToggles: debugToggles
+  // Update data with debug toggles - use useMemo to ensure stable reference
+  const dataWithToggles = useMemo(() => {
+    if (!data) return null
+    return {
+      ...data,
+      metadata: {
+        ...data.metadata,
+        featureToggles: debugToggles
+      }
     }
-  } : null
+  }, [data, debugToggles])
 
   const toggleFeature = (key) => {
-    setDebugToggles(prev => ({
-      ...prev,
-      [key]: !prev[key]
-    }))
+    setDebugToggles(prev => {
+      const newToggles = {
+        ...prev,
+        [key]: !prev[key]
+      }
+      // Persist to localStorage
+      localStorage.setItem('mc_backup_debug_toggles', JSON.stringify(newToggles))
+      return newToggles
+    })
+  }
+
+  const resetToggles = () => {
+    const defaultToggles = data?.metadata?.featureToggles || {
+      TechDashboard_DisplayBillRate: true,
+      TechDashboard_DisplayFeeSplitRate: true,
+      TechDashboard_DisplayAddOnRate: true,
+      TechDashboard_DisplayRoomRate: true,
+      TechDashboard_DisplayCustomerPhoneNumbers: false,
+      TechDashboard_DisplayCustomerEmails: false,
+      TechDashboard_HideDiscounts: false
+    }
+    setDebugToggles(defaultToggles)
+    localStorage.setItem('mc_backup_debug_toggles', JSON.stringify(defaultToggles))
   }
 
   return (
@@ -69,8 +109,6 @@ function App() {
                 <JobCalendar
                   data={dataWithToggles}
                   viewMode={viewMode}
-                  hideInfo={hideInfo}
-                  setHideInfo={setHideInfo}
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
                   selectedCompany={selectedCompany}
@@ -86,8 +124,6 @@ function App() {
                 <EmployeeCalendar
                   data={dataWithToggles}
                   viewMode={viewMode}
-                  hideInfo={hideInfo}
-                  setHideInfo={setHideInfo}
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
                   selectedCompany={selectedCompany}
@@ -103,8 +139,6 @@ function App() {
                 <ExportSchedule
                   data={dataWithToggles}
                   viewMode={viewMode}
-                  hideInfo={hideInfo}
-                  setHideInfo={setHideInfo}
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
                   selectedCompany={selectedCompany}
@@ -130,7 +164,6 @@ function App() {
                 <TeamDetail
                   data={dataWithToggles}
                   viewMode={viewMode}
-                  hideInfo={hideInfo}
                   selectedDate={selectedDate}
                   setSelectedDate={setSelectedDate}
                   selectedCompany={selectedCompany}
@@ -144,8 +177,6 @@ function App() {
                 <JobView
                   data={dataWithToggles}
                   viewMode={viewMode}
-                  hideInfo={hideInfo}
-                  setHideInfo={setHideInfo}
                 />
               }
             />
@@ -173,36 +204,52 @@ function App() {
                 Feature Toggles (click to toggle):
               </div>
               {Object.entries(debugToggles)
-                .filter(([key]) => key.startsWith('TechDashboard_Display'))
-                .map(([key, value]) => (
-                  <div
-                    key={key}
-                    className="flex items-center justify-between py-1 cursor-pointer hover:bg-slate-800 px-2 rounded"
-                    onClick={() => toggleFeature(key)}
-                  >
-                    <span className="text-slate-300 truncate mr-2">
-                      {key.replace('TechDashboard_Display', '')}:
-                    </span>
-                    <span className={`px-2 py-0.5 rounded font-semibold transition-colors ${
-                      value
-                        ? 'bg-green-600 text-white'
-                        : 'bg-red-600 text-white'
-                    }`}>
-                      {value ? 'SHOW' : 'HIDE'}
-                    </span>
-                  </div>
-                ))}
+                .filter(([key]) => key.startsWith('TechDashboard_'))
+                .map(([key, value]) => {
+                  // Determine if this is an inverse logic toggle (Hide* instead of Display*)
+                  const isInverseLogic = key.includes('Hide')
+                  const displayLabel = key
+                    .replace('TechDashboard_Display', '')
+                    .replace('TechDashboard_Hide', '')
+                    .replace('TechDashboard_', '')
+
+                  // For inverse logic: true = hide, false = show
+                  // For normal logic: true = show, false = hide
+                  const isShowing = isInverseLogic ? !value : value
+
+                  return (
+                    <div
+                      key={key}
+                      className="flex items-center justify-between py-1 cursor-pointer hover:bg-slate-800 px-2 rounded"
+                      onClick={() => toggleFeature(key)}
+                    >
+                      <span className="text-slate-300 truncate mr-2 text-[11px]">
+                        {displayLabel}:
+                      </span>
+                      <span className={`px-2 py-0.5 rounded font-semibold transition-colors text-[10px] ${
+                        isShowing
+                          ? 'bg-green-600 text-white'
+                          : 'bg-red-600 text-white'
+                      }`}>
+                        {isShowing ? 'ON' : 'OFF'}
+                      </span>
+                    </div>
+                  )
+                })}
             </div>
 
             <div className="mt-3 pt-2 border-t border-slate-600 text-[10px] text-slate-400">
-              <div>Manual Toggle: <span className={hideInfo ? 'text-orange-400' : 'text-green-400'}>
-                {hideInfo ? 'ON (hiding)' : 'OFF (showing)'}
-              </span></div>
-              <div className="mt-1">
+              <div className="mb-2">
                 {viewMode === 'office'
                   ? '✓ Office view ignores all toggles'
                   : '✓ Tech view respects FeatureToggles'}
               </div>
+              <button
+                onClick={resetToggles}
+                className="w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-[10px] font-semibold transition-colors"
+              >
+                Reset to Defaults
+              </button>
             </div>
           </div>
         )}

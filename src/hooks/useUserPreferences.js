@@ -37,20 +37,42 @@ export function useUserPreferences() {
   }
 
   /**
-   * Update hideInfo toggle specifically
-   * @param {boolean} hideInfo - True to hide sensitive info
+   * Update selected date specifically
+   * @param {string} selectedDate - ISO date string (YYYY-MM-DD)
    * @returns {boolean} - Success status
    */
-  const setHideInfo = (hideInfo) => {
-    return updatePreferences({ hideInfo })
+  const setSelectedDate = (selectedDate) => {
+    return updatePreferences({ selectedDate })
+  }
+
+  /**
+   * Update selected company specifically
+   * @param {string} selectedCompany - Company ID or 'all'
+   * @returns {boolean} - Success status
+   */
+  const setSelectedCompany = (selectedCompany) => {
+    return updatePreferences({ selectedCompany })
+  }
+
+  /**
+   * Update selected team specifically
+   * @param {string} selectedTeam - Team ID or 'all'
+   * @returns {boolean} - Success status
+   */
+  const setSelectedTeam = (selectedTeam) => {
+    return updatePreferences({ selectedTeam })
   }
 
   return {
     preferences,
     viewMode: preferences.viewMode,
-    hideInfo: preferences.hideInfo,
+    selectedDate: preferences.selectedDate,
+    selectedCompany: preferences.selectedCompany,
+    selectedTeam: preferences.selectedTeam,
     updatePreferences,
     setViewMode,
-    setHideInfo
+    setSelectedDate,
+    setSelectedCompany,
+    setSelectedTeam
   }
 }

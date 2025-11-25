@@ -9,7 +9,7 @@ import { Select } from './ui/select'
 import { Label } from './ui/switch'
 import { shouldHideField } from '../utils/userPreferences'
 
-export default function TeamDetail({ data, viewMode, hideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany }) {
+export default function TeamDetail({ data, viewMode, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany }) {
   const { teamId } = useParams()
   const navigate = useNavigate()
 
@@ -216,20 +216,24 @@ export default function TeamDetail({ data, viewMode, hideInfo, selectedDate, set
                   <p><strong>Address:</strong> {job.address}</p>
 
                   {job.contactInfo && (
-                    (!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
-                    (!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email)
+                    (!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
+                    (!shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email)
                   ) && (
                     <p>
                       <strong>Contact:</strong>{' '}
-                      {!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone && `Phone: ${job.contactInfo.phone}`}
-                      {!shouldHideField(viewMode, hideInfo, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone &&
-                       !shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && ', '}
-                      {!shouldHideField(viewMode, hideInfo, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && `Email: ${job.contactInfo.email}`}
+                      {!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone && `Phone: ${job.contactInfo.phone}`}
+                      {!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone &&
+                       !shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && ', '}
+                      {!shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo.email && `Email: ${job.contactInfo.email}`}
                     </p>
                   )}
 
-                  {!shouldHideField(viewMode, hideInfo, 'billRate', data.metadata?.featureToggles) && job.billRate && (
-                    <p><strong>Rate:</strong> ${job.billRate}</p>
+                  {!shouldHideField(viewMode, 'billRate', data.metadata?.featureToggles) && job.billRate && (
+                    <p><strong>Bill Rate:</strong> ${job.billRate}</p>
+                  )}
+
+                  {!shouldHideField(viewMode, 'feeSplitRate', data.metadata?.featureToggles) && job.feeSplitRate && (
+                    <p><strong>Fee Split Rate:</strong> ${job.feeSplitRate}</p>
                   )}
 
                   {job.tags && job.tags.length > 0 && (

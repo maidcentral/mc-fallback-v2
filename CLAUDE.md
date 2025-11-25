@@ -44,28 +44,40 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. **Multi-Team Jobs**: Jobs can belong to multiple teams via `scheduledTeams[]` array
 4. **Unassigned Jobs**: Jobs with empty `ScheduledTeams[]` assign to special "Unassigned" team (id: "0")
 5. **Contact Info**: Prefer Cell Phone (ContactTypeId=2), fallback to Home Phone (ContactTypeId=1); Email is ContactTypeId=3
-6. **View Modes**: Two-mode system - Office View (shows all data) vs Technician View (respects privacy toggles)
-7. **Privacy**: Privacy toggle hides sensitive data (billRate, contactInfo, accessInformation, internalMemo) when in Technician View
-8. **Export**: No email sending capability - generate PDF/PNG for manual distribution
+6. **View Modes**: Two-mode system - Office View (shows all data) vs Technician View (respects FeatureToggles from DTO)
+7. **Export**: No email sending capability - generate PDF/PNG for manual distribution
 
 ### View Modes & Privacy System
 
 **Office View** (default):
-- Shows ALL data regardless of privacy toggle state
+- Shows ALL data regardless of FeatureToggles
 - Intended for office staff managing schedules
-- Access to billing rates, customer contacts, access codes, internal memos
+- Access to all billing rates, customer contacts, access codes, internal memos, discounts
 - Toggle available in header (desktop & mobile)
 
 **Technician View**:
-- Respects "Hide Sensitive Information" privacy toggle
+- Respects FeatureToggles from uploaded data (DTO)
+- Hides fields based on toggle values
 - Intended for field technicians viewing their assignments
-- When privacy enabled, hides:
-  - `billRate` - Billing/rate information
-  - `contactInfo.phone` - Customer phone numbers
-  - `contactInfo.email` - Customer email addresses
-  - `accessInformation` - Lockbox codes, gate codes, keys (CRITICAL)
-  - `internalMemo` - Internal office notes
-- Non-sensitive fields always shown:
+
+**FeatureToggles (from DTO)** - Control visibility in Technician View:
+
+*Pricing/Rate Information (✅ Implemented):*
+  - `TechDashboard_DisplayBillRate` - Show/hide bill rate (mapped to `billRate` field)
+  - `TechDashboard_DisplayFeeSplitRate` - Show/hide fee split rate (mapped to `feeSplitRate` field)
+  - `TechDashboard_DisplayAddOnRate` - Show/hide add-on rate (mapped to `addOnRate` field)
+  - `TechDashboard_DisplayRoomRate` - Show/hide room rate (mapped to `roomRate` field)
+  - `TechDashboard_HideDiscounts` - Hide discount information - inverse logic (mapped to `discounts` field)
+
+*Contact Information (✅ Implemented):*
+  - `TechDashboard_DisplayCustomerPhoneNumbers` - Show/hide customer phone numbers (mapped to `customerPhone` field)
+  - `TechDashboard_DisplayCustomerEmails` - Show/hide customer emails (mapped to `customerEmail` field)
+
+*Sensitive Data (✅ Implemented):*
+  - `accessInformation` - Lockbox codes, gate codes, keys (always hidden in Technician View, no toggle available)
+  - `internalMemo` - Internal office notes (always hidden in Technician View, no toggle available)
+
+**Non-sensitive fields always shown:**
   - Customer name, address
   - Service type, scope of work
   - Schedule times, team assignments
@@ -73,9 +85,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Implementation**:
 - View mode stored in localStorage (`mc_backup_user_prefs`)
-- Privacy toggle only affects Technician View
-- Helper function: `shouldHideField(viewMode, hideInfo)` returns true if field should be hidden
-- Pattern: `if (!shouldHideField(viewMode, hideInfo)) { /* show sensitive field */ }`
+- FeatureToggles come from uploaded JSON data (or debug panel overrides persisted in `mc_backup_debug_toggles`)
+- Toggle logic:
+  - For `Display*` toggles: `false` = hide, `true` = show
+  - For `Hide*` toggles (inverse logic): `true` = hide, `false` = show
+  - Office View ignores all FeatureToggles (shows everything)
+  - Technician View respects FeatureToggles
+- Helper function: `shouldHideField(viewMode, fieldName, featureToggles)` returns true if field should be hidden
+- Field name mapping in `userPreferences.js:FIELD_TO_FEATURE_TOGGLE`:
+  ```javascript
+  {
+    billRate: 'TechDashboard_DisplayBillRate',
+    feeSplitRate: 'TechDashboard_DisplayFeeSplitRate',
+    addOnRate: 'TechDashboard_DisplayAddOnRate',
+    roomRate: 'TechDashboard_DisplayRoomRate',
+    customerPhone: 'TechDashboard_DisplayCustomerPhoneNumbers',
+    customerEmail: 'TechDashboard_DisplayCustomerEmails',
+    discounts: 'TechDashboard_HideDiscounts', // Inverse logic
+    accessInformation: null, // Always hidden in Technician view
+    internalMemo: null // Always hidden in Technician view
+  }
+  ```
+- Usage pattern: `if (!shouldHideField(viewMode, 'billRate', featureToggles)) { /* show field */ }`
+
+**Adding New FeatureToggle Support**:
+1. Add mapping to `FIELD_TO_FEATURE_TOGGLE` in `userPreferences.js`
+2. Update UI components to call `shouldHideField()` with the new fieldName
+3. Test that Office View shows field, Technician View respects toggle
 
 ### Component Architecture
 
@@ -97,18 +133,19 @@ App.js (root)
 
 **LocalStorage Keys**:
 - `mc_backup_data`: Entire transformed dataset
-- `mc_backup_user_prefs`: User preferences (viewMode, hideInfo)
+- `mc_backup_user_prefs`: User preferences (viewMode only)
+- `mc_backup_debug_toggles`: Debug panel FeatureToggle overrides (persists across refreshes)
 
 **Utilities**:
 - `storage.js`: Simple wrapper around localStorage (save, load, clear, exists)
 - `dataTransform.js`: Transform Format A → internal format
 - `exportHelpers.js`: html2canvas + jsPDF for PDF/PNG generation
 - `teamPositions.js`: Map TeamPosition IDs (1,2,3...) to names/colors
-- `userPreferences.js`: User preferences storage (viewMode, privacy toggles)
+- `userPreferences.js`: User preferences storage (viewMode) and FeatureToggle field mapping
 
 **Hooks**:
 - `usePersistedData.js`: Load on mount, provide save/clear functions
-- `useUserPreferences.js`: Manage view mode and privacy settings
+- `useUserPreferences.js`: Manage view mode toggle (Office/Technician)
 
 ---
 
