@@ -10,6 +10,7 @@
 
 # production
 /build
+/dist
 
 # misc
 .DS_Store
@@ -32,3 +33,6 @@ data-ex/
 
 # Claude Code workspace (if you want to keep it private)
 # .claude/
+
+# Vercel
+.vercel
