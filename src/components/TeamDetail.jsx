@@ -8,6 +8,7 @@ import { Input } from './ui/input'
 import { Select } from './ui/select'
 import { Label } from './ui/switch'
 import { shouldHideField } from '../utils/userPreferences'
+import { Bed, Bath, Ruler, Bell, AlertCircle, Check } from 'lucide-react'
 
 export default function TeamDetail({ data, viewMode, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany }) {
   const { teamId } = useParams()
@@ -205,15 +206,73 @@ export default function TeamDetail({ data, viewMode, selectedDate, setSelectedDa
                 onClick={() => navigate(`/jobs/${job.id}`)}
               >
                 <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h4 className="font-semibold text-lg hover:text-blue-600">{job.customerName}</h4>
-                    <p className="text-sm text-gray-600">{job.serviceType}</p>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-lg hover:text-gray-700">{job.customerName}</h4>
+                    <div className="flex items-center gap-2 mt-1">
+                      <p className="text-sm text-gray-600">{job.serviceType}</p>
+                      {job.frequency && job.frequency.description && (
+                        <Badge
+                          className="text-xs"
+                          style={{
+                            backgroundColor: job.frequency.color,
+                            color: '#ffffff',
+                            border: 'none'
+                          }}
+                        >
+                          {job.frequency.description} ({job.frequency.abbreviation})
+                        </Badge>
+                      )}
+                    </div>
+                    {job.scopeOfWork && (
+                      <p className="text-xs text-gray-500">{job.scopeOfWork}</p>
+                    )}
                   </div>
-                  <Badge>{job.schedule.startTime} - {job.schedule.endTime}</Badge>
+                  <Badge>
+                    {job.schedule.startTime} - {job.schedule.endTime}
+                    {job.allowedTime > 0 && ` (${job.allowedTime.toFixed(2)} hrs)`}
+                  </Badge>
                 </div>
 
                 <div className="text-sm space-y-1">
-                  <p><strong>Address:</strong> {job.address}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p><strong>Address:</strong> {job.address}</p>
+                    {job.homeZone && job.homeZone.description && (
+                      <Badge
+                        className="text-xs"
+                        style={{
+                          backgroundColor: job.homeZone.color,
+                          color: '#ffffff',
+                          border: 'none'
+                        }}
+                      >
+                        {job.homeZone.description}
+                      </Badge>
+                    )}
+                  </div>
+
+                  {/* Home Statistics */}
+                  {job.homeStats && (job.homeStats.bedrooms || job.homeStats.bathrooms || job.homeStats.squareFootage) && (
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
+                      {job.homeStats.bedrooms && (
+                        <div className="flex items-center gap-1">
+                          <Bed className="w-3 h-3" />
+                          <span>{job.homeStats.bedrooms} BR</span>
+                        </div>
+                      )}
+                      {job.homeStats.bathrooms && (
+                        <div className="flex items-center gap-1">
+                          <Bath className="w-3 h-3" />
+                          <span>{job.homeStats.bathrooms} BA</span>
+                        </div>
+                      )}
+                      {job.homeStats.squareFootage && (
+                        <div className="flex items-center gap-1">
+                          <Ruler className="w-3 h-3" />
+                          <span>{parseInt(job.homeStats.squareFootage).toLocaleString()} sq ft</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {job.contactInfo && (
                     (!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo.phone) ||
@@ -228,18 +287,64 @@ export default function TeamDetail({ data, viewMode, selectedDate, setSelectedDa
                     </p>
                   )}
 
-                  {!shouldHideField(viewMode, 'billRate', data.metadata?.featureToggles) && job.billRate && (
-                    <p><strong>Bill Rate:</strong> ${job.billRate}</p>
-                  )}
+                  {/* Rates - Inline if both exist */}
+                  {(!shouldHideField(viewMode, 'billRate', data.metadata?.featureToggles) && job.billRate) ||
+                   (!shouldHideField(viewMode, 'feeSplitRate', data.metadata?.featureToggles) && job.feeSplitRate) ? (
+                    <p>
+                      {!shouldHideField(viewMode, 'billRate', data.metadata?.featureToggles) && job.billRate && (
+                        <><strong>Bill Rate:</strong> ${job.billRate}</>
+                      )}
+                      {!shouldHideField(viewMode, 'billRate', data.metadata?.featureToggles) && job.billRate &&
+                       !shouldHideField(viewMode, 'feeSplitRate', data.metadata?.featureToggles) && job.feeSplitRate && ' | '}
+                      {!shouldHideField(viewMode, 'feeSplitRate', data.metadata?.featureToggles) && job.feeSplitRate && (
+                        <><strong>Fee Split Rate:</strong> ${job.feeSplitRate}</>
+                      )}
+                    </p>
+                  ) : null}
 
-                  {!shouldHideField(viewMode, 'feeSplitRate', data.metadata?.featureToggles) && job.feeSplitRate && (
-                    <p><strong>Fee Split Rate:</strong> ${job.feeSplitRate}</p>
-                  )}
+                  {/* Indicators Row */}
+                  <div className="flex flex-wrap gap-2 mt-3">
+                    {/* Special Equipment Badge - Red/Warning Style */}
+                    {job.specialEquipment && (
+                      <Badge className="text-xs flex items-center gap-1 bg-red-50 border-red-500 text-red-700 border">
+                        <AlertCircle className="w-3 h-3" />
+                        Special Equipment
+                      </Badge>
+                    )}
+
+                    {/* Notifications Badges - Distinct by Event Type */}
+                    {job.customerNotifications && job.customerNotifications.length > 0 &&
+                      job.customerNotifications.map((notification, idx) => {
+                        const isSent = notification.SentAt != null
+                        return (
+                          <Badge
+                            key={idx}
+                            className={`text-xs flex items-center gap-1 ${
+                              isSent
+                                ? 'bg-green-50 border-green-500 text-green-700 border'
+                                : 'border-gray-300 text-gray-700 border bg-gray-50'
+                            }`}
+                          >
+                            {isSent ? <Check className="w-3 h-3" /> : <Bell className="w-3 h-3" />}
+                            {notification.NotificationEvent}
+                          </Badge>
+                        )
+                      })
+                    }
+                  </div>
 
                   {job.tags && job.tags.length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-2">
                       {job.tags.map((tag, idx) => (
-                        <Badge key={idx} variant="outline" className="text-xs">
+                        <Badge
+                          key={idx}
+                          variant="outline"
+                          className="text-xs"
+                          style={{
+                            borderColor: tag.color || '#999999',
+                            color: tag.color || '#999999'
+                          }}
+                        >
                           {tag.description || tag}
                         </Badge>
                       ))}

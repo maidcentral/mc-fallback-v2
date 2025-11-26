@@ -155,6 +155,20 @@ function transformJob(job) {
   // Extract customer notifications (service-related only)
   const customerNotifications = extractCustomerNotifications(job.CustomerNotifications)
 
+  // Extract frequency information (from BaseFeeLog or flat fields)
+  const frequency = {
+    description: job.BaseFeeLog?.FrequencyDescription || job.FrequencyDescription || '',
+    abbreviation: job.BaseFeeLog?.FrequencyAbbreviation || job.FrequencyAbbreviation || '',
+    color: job.BaseFeeLog?.FrequencyColor || job.FrequencyColor || '#CCCCCC'
+  }
+
+  // Extract home zone information
+  const homeZone = {
+    id: job.HomeZoneId ? String(job.HomeZoneId) : '',
+    description: job.HomeZoneDescription || '',
+    color: job.HomeZoneColor || '#CCCCCC'
+  }
+
   return {
     id: String(job.JobInformationId),
     customerName,
@@ -170,7 +184,9 @@ function transformJob(job) {
     billRate: job.BillRate || 0,
     feeSplitRate: job.FeeSplitRate || 0,
     contactInfo,
-    customerNotifications
+    customerNotifications,
+    frequency,
+    homeZone
   }
 }
 
@@ -687,6 +703,20 @@ function transformJobDR(job) {
   // Extract customer notifications (service-related only)
   const customerNotifications = extractCustomerNotifications(job.CustomerNotifications)
 
+  // Extract frequency information (from BaseFeeLog or flat fields)
+  const frequency = {
+    description: job.BaseFeeLog?.FrequencyDescription || job.FrequencyDescription || '',
+    abbreviation: job.BaseFeeLog?.FrequencyAbbreviation || job.FrequencyAbbreviation || '',
+    color: job.BaseFeeLog?.FrequencyColor || job.FrequencyColor || '#CCCCCC'
+  }
+
+  // Extract home zone information
+  const homeZone = {
+    id: job.HomeZoneId ? String(job.HomeZoneId) : '',
+    description: job.HomeZoneDescription || '',
+    color: job.HomeZoneColor || '#CCCCCC'
+  }
+
   return {
     id: String(job.JobInformationId),
     companyId: String(job.ServiceCompanyId),
@@ -707,6 +737,8 @@ function transformJobDR(job) {
     feeSplitRate: job.FeeSplitRate || 0,
     contactInfo,
     customerNotifications,
+    frequency,
+    homeZone,
     // Rate breakdown fields
     baseFee: job.BaseFeeLog || null,
     serviceSetRateMods: job.ServiceSetRateMods || [],

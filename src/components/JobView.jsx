@@ -27,7 +27,8 @@ import {
   Bath,
   Ruler,
   Building2,
-  Bell
+  Bell,
+  Check
 } from 'lucide-react'
 
 export default function JobView({ data, viewMode }) {
@@ -203,13 +204,13 @@ export default function JobView({ data, viewMode }) {
                   <div className="flex flex-wrap items-center gap-4 text-sm text-gray-700">
                     {!shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles) && job.contactInfo?.phone && (
                       <div className="flex items-center gap-2">
-                        <Phone className="w-4 h-4 text-[#005DA5]" />
+                        <Phone className="w-4 h-4 text-gray-600" />
                         <span>{job.contactInfo.phone}</span>
                       </div>
                     )}
                     {!shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles) && job.contactInfo?.email && (
                       <div className="flex items-center gap-2">
-                        <Mail className="w-4 h-4 text-[#005DA5]" />
+                        <Mail className="w-4 h-4 text-gray-600" />
                         <span>{job.contactInfo.email}</span>
                       </div>
                     )}
@@ -220,7 +221,7 @@ export default function JobView({ data, viewMode }) {
                 {job.customerNotifications && job.customerNotifications.length > 0 && (
                   <div className="border-t border-gray-200 pt-3 mt-3">
                     <div className="flex items-center gap-2 mb-2">
-                      <Bell className="w-4 h-4 text-[#005DA5]" />
+                      <Bell className="w-4 h-4 text-gray-600" />
                       <h3 className="text-sm font-semibold text-gray-600">Customer Notifications</h3>
                     </div>
                     <ul className="space-y-1 text-sm text-gray-700">
@@ -235,9 +236,16 @@ export default function JobView({ data, viewMode }) {
                           (isPhoneNotification && shouldHideField(viewMode, 'customerPhone', data.metadata?.featureToggles)) ||
                           (isEmailNotification && shouldHideField(viewMode, 'customerEmail', data.metadata?.featureToggles))
 
+                        // Check if notification was sent
+                        const isSent = notification.SentAt != null
+
                         return (
                           <li key={idx} className="flex items-start gap-2">
-                            <span className="text-[#005DA5] mt-0.5">•</span>
+                            {isSent ? (
+                              <Check className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
+                            ) : (
+                              <Bell className="w-4 h-4 text-gray-400 mt-0.5 flex-shrink-0" />
+                            )}
                             <span>
                               <strong>{notification.NotificationEvent}</strong>{hideContactInfo ? '' : ` → ${notification.ContactInfo}`} ({notification.NotificationType})
                             </span>
@@ -283,7 +291,21 @@ export default function JobView({ data, viewMode }) {
                 {/* Address */}
                 <div className="flex items-start gap-2 text-sm text-gray-700">
                   <MapPin className="w-4 h-4 text-[#01726B] mt-0.5 flex-shrink-0" />
-                  <span>{job.address}</span>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span>{job.address}</span>
+                    {job.homeZone && job.homeZone.description && (
+                      <Badge
+                        className="text-xs"
+                        style={{
+                          backgroundColor: job.homeZone.color,
+                          color: '#ffffff',
+                          border: 'none'
+                        }}
+                      >
+                        {job.homeZone.description}
+                      </Badge>
+                    )}
+                  </div>
                 </div>
 
                 {/* Home Stats */}
@@ -368,6 +390,23 @@ export default function JobView({ data, viewMode }) {
                     </span>
                   </div>
                 </div>
+
+                {/* Frequency */}
+                {job.frequency && job.frequency.description && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-gray-600 mb-2">Frequency</h3>
+                    <Badge
+                      style={{
+                        backgroundColor: job.frequency.color,
+                        color: '#ffffff',
+                        border: 'none'
+                      }}
+                      className="px-3 py-1"
+                    >
+                      {job.frequency.description} ({job.frequency.abbreviation})
+                    </Badge>
+                  </div>
+                )}
 
                 {/* Assigned Teams */}
                 {assignedTeams.length > 0 && (
