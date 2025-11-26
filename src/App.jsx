@@ -94,7 +94,7 @@ function App() {
 
   return (
     <Router>
-      <div className="min-h-screen flex flex-col">
+      <div className="min-h-screen flex flex-col bg-gray-50">
         <Header viewMode={viewMode} setViewMode={setViewMode} />
         <main className="flex-1 container mx-auto px-4 py-8 max-w-7xl">
           <Routes>
@@ -187,66 +187,69 @@ function App() {
 
         {/* Debug Panel - Floating */}
         {data && (
-          <div className="fixed bottom-4 right-4 bg-slate-900 text-white p-4 rounded-lg shadow-2xl border border-slate-700 max-w-sm text-xs font-mono z-50">
-            <div className="flex items-center justify-between mb-2 pb-2 border-b border-slate-600">
-              <h3 className="font-bold text-sm">🔧 Feature Toggles Debug</h3>
-              <div className={`px-2 py-1 rounded text-xs font-semibold ${
-                viewMode === 'office'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-orange-600 text-white'
-              }`}>
-                {viewMode === 'office' ? 'OFFICE' : 'TECH'}
+          <div className="fixed bottom-4 right-4 bg-white rounded-2xl shadow-2xl border-2 border-[#005DA5]/20 max-w-sm text-xs z-50 overflow-hidden">
+            <div className="bg-gradient-to-r from-[#005DA5] to-[#0382E5] px-4 py-3">
+              <div className="flex items-center justify-between mb-1">
+                <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                  <span className="text-base">🔧</span> Feature Toggles
+                </h3>
+                <div className={`px-2 py-1 rounded-lg text-xs font-bold ${
+                  viewMode === 'office'
+                    ? 'bg-white/20 text-white'
+                    : 'bg-amber-400 text-amber-900'
+                }`}>
+                  {viewMode === 'office' ? 'OFFICE' : 'TECH'}
+                </div>
               </div>
+              <p className="text-xs text-purple-100">
+                Click toggles to change visibility
+              </p>
             </div>
 
-            <div className="space-y-1">
-              <div className="text-slate-400 text-[10px] uppercase tracking-wide mb-1">
-                Feature Toggles (click to toggle):
-              </div>
+            <div className="p-4 space-y-2 max-h-96 overflow-y-auto">
               {Object.entries(debugToggles)
                 .filter(([key]) => key.startsWith('TechDashboard_'))
                 .map(([key, value]) => {
-                  // Determine if this is an inverse logic toggle (Hide* instead of Display*)
                   const isInverseLogic = key.includes('Hide')
                   const displayLabel = key
                     .replace('TechDashboard_Display', '')
                     .replace('TechDashboard_Hide', '')
                     .replace('TechDashboard_', '')
+                    .replace(/([A-Z])/g, ' $1')
+                    .trim()
 
-                  // For inverse logic: true = hide, false = show
-                  // For normal logic: true = show, false = hide
                   const isShowing = isInverseLogic ? !value : value
 
                   return (
                     <div
                       key={key}
-                      className="flex items-center justify-between py-1 cursor-pointer hover:bg-slate-800 px-2 rounded"
+                      className="flex items-center justify-between p-2 cursor-pointer hover:bg-[#005DA5]/5 rounded-lg transition-colors border border-gray-200 hover:border-[#005DA5]/30"
                       onClick={() => toggleFeature(key)}
                     >
-                      <span className="text-slate-300 truncate mr-2 text-[11px]">
-                        {displayLabel}:
+                      <span className="text-gray-700 font-medium text-xs">
+                        {displayLabel}
                       </span>
-                      <span className={`px-2 py-0.5 rounded font-semibold transition-colors text-[10px] ${
+                      <div className={`px-3 py-1 rounded-full font-bold transition-all text-[10px] ${
                         isShowing
-                          ? 'bg-green-600 text-white'
-                          : 'bg-red-600 text-white'
+                          ? 'bg-green-100 text-green-700 border border-green-300'
+                          : 'bg-red-100 text-red-700 border border-red-300'
                       }`}>
                         {isShowing ? 'ON' : 'OFF'}
-                      </span>
+                      </div>
                     </div>
                   )
                 })}
             </div>
 
-            <div className="mt-3 pt-2 border-t border-slate-600 text-[10px] text-slate-400">
-              <div className="mb-2">
+            <div className="px-4 py-3 bg-gray-50 border-t border-gray-200">
+              <div className="text-[10px] text-gray-600 mb-2 font-medium">
                 {viewMode === 'office'
-                  ? '✓ Office view ignores all toggles'
-                  : '✓ Tech view respects FeatureToggles'}
+                  ? '✓ Office view shows all data'
+                  : '✓ Tech view respects toggles'}
               </div>
               <button
                 onClick={resetToggles}
-                className="w-full px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded text-[10px] font-semibold transition-colors"
+                className="w-full px-3 py-2 bg-[#01726B] hover:bg-[#005952] text-white border-2 border-[#1A1A1A] rounded-full text-xs font-bold transition-all shadow-sm"
               >
                 Reset to Defaults
               </button>

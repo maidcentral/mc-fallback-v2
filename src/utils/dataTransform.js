@@ -130,6 +130,9 @@ function transformJob(job) {
   // Extract address
   const address = buildAddress(job.HomeInformation)
 
+  // Extract home stats
+  const homeStats = extractHomeStats(job.HomeInformation)
+
   // Extract service type and scope
   const serviceType = job.ServiceSet?.ServiceSetDescription || job.ServiceSetDescription || 'Unknown Service'
   const scopeOfWork = job.ServiceSet?.ServiceSetTypeDescription || job.ServiceSetTypeDescription || 'Unknown'
@@ -149,19 +152,25 @@ function transformJob(job) {
   // Extract schedule
   const schedule = extractSchedule(job)
 
+  // Extract customer notifications (service-related only)
+  const customerNotifications = extractCustomerNotifications(job.CustomerNotifications)
+
   return {
     id: String(job.JobInformationId),
     customerName,
     serviceType,
     scopeOfWork,
     address,
+    homeStats,
     ...instructions,
     tags,
     scheduledTeams,
     schedule,
+    allowedTime: job.AllowedTime || 0,
     billRate: job.BillRate || 0,
     feeSplitRate: job.FeeSplitRate || 0,
-    contactInfo
+    contactInfo,
+    customerNotifications
   }
 }
 
@@ -187,6 +196,24 @@ function buildAddress(homeInfo) {
   if (cityStateZip) parts.push(cityStateZip)
 
   return parts.join(', ') || 'Unknown Address'
+}
+
+/**
+ * Extract home statistics from HomeInformation object
+ * @param {Object} homeInfo - HomeInformation object
+ * @returns {Object} - Home statistics
+ */
+function extractHomeStats(homeInfo) {
+  if (!homeInfo) return null
+
+  return {
+    bedrooms: homeInfo.HomeBedrooms || null,
+    bathrooms: homeInfo.HomeBathrooms || null,
+    fullBath: homeInfo.HomeFullBath || null,
+    halfBath: homeInfo.HomeHalfBath || null,
+    squareFootage: homeInfo.HomeFinishedSquareFootage || null,
+    stories: homeInfo.HomeStories || null
+  }
 }
 
 /**
@@ -228,6 +255,24 @@ function extractContactInfo(contactInfos) {
     phone: cellPhone?.ContactInfo || homePhone?.ContactInfo || '',
     email: email?.ContactInfo || ''
   }
+}
+
+/**
+ * Extract customer notifications (service-related only, excludes Invoice and Scorecard)
+ * @param {Array} customerNotifications - Array of notification objects
+ * @returns {Array} - Filtered array of service-related notifications
+ */
+function extractCustomerNotifications(customerNotifications) {
+  if (!Array.isArray(customerNotifications) || customerNotifications.length === 0) {
+    return []
+  }
+
+  // Filter to only service-related notifications
+  const serviceRelatedEvents = ['Three Days Before', 'One Day Before', 'On The Way']
+
+  return customerNotifications.filter(notification =>
+    serviceRelatedEvents.includes(notification.NotificationEvent)
+  )
 }
 
 /**
@@ -614,6 +659,9 @@ function transformJobDR(job) {
   // Extract address (fields are flattened at job level in DR format)
   const address = buildAddressDR(job)
 
+  // Extract home stats (fields are flattened at job level in DR format)
+  const homeStats = extractHomeStatsDR(job)
+
   // Extract service type and scope (fields are flattened at job level)
   const serviceType = job.ServiceSetDescription || 'Unknown Service'
   const scopeOfWork = job.ServiceSetTypeDescription || 'Unknown'
@@ -636,6 +684,9 @@ function transformJobDR(job) {
   // Extract schedule
   const schedule = extractSchedule(job)
 
+  // Extract customer notifications (service-related only)
+  const customerNotifications = extractCustomerNotifications(job.CustomerNotifications)
+
   return {
     id: String(job.JobInformationId),
     companyId: String(job.ServiceCompanyId),
@@ -644,15 +695,18 @@ function transformJobDR(job) {
     serviceType,
     scopeOfWork,
     address,
+    homeStats,
     ...instructions,
     tags,
     rooms,
     scheduledTeams,
     schedule,
+    allowedTime: job.AllowedTime || 0,
     // Use BillRate if available, fallback to BaseFeeLog.Amount
     billRate: job.BillRate || job.BaseFeeLog?.Amount || 0,
     feeSplitRate: job.FeeSplitRate || 0,
     contactInfo,
+    customerNotifications,
     // Rate breakdown fields
     baseFee: job.BaseFeeLog || null,
     serviceSetRateMods: job.ServiceSetRateMods || [],
@@ -680,6 +734,24 @@ function buildAddressDR(job) {
   if (cityStateZip) parts.push(cityStateZip)
 
   return parts.join(', ') || 'Unknown Address'
+}
+
+/**
+ * Extract home statistics from flattened DR format job fields
+ * @param {Object} job - Job object with flattened home stat fields
+ * @returns {Object} - Home statistics
+ */
+function extractHomeStatsDR(job) {
+  if (!job) return null
+
+  return {
+    bedrooms: job.HomeBedrooms || null,
+    bathrooms: job.HomeBathrooms || null,
+    fullBath: job.HomeFullBath || null,
+    halfBath: job.HomeHalfBath || null,
+    squareFootage: job.HomeFinishedSquareFootage || null,
+    stories: job.HomeStories || null
+  }
 }
 
 /**

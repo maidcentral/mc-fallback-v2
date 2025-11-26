@@ -84,8 +84,8 @@ const FIELD_TO_FEATURE_TOGGLE = {
   customerPhone: 'TechDashboard_DisplayCustomerPhoneNumbers',
   customerEmail: 'TechDashboard_DisplayCustomerEmails',
   discounts: 'TechDashboard_HideDiscounts', // Inverse logic: true = hide
-  accessInformation: null, // Always respects hideInfo in Technician view (no specific toggle)
-  internalMemo: null // Always respects hideInfo in Technician view (no specific toggle)
+  accessInformation: 'ALWAYS_SHOW', // Always visible in both Office and Technician view
+  internalMemo: null // Always hidden in Technician view (no specific toggle)
 }
 
 /**
@@ -108,6 +108,11 @@ export function shouldHideField(viewMode, fieldName = null, featureToggles = nul
   if (fieldName && featureToggles) {
     const featureToggleKey = FIELD_TO_FEATURE_TOGGLE[fieldName]
 
+    // Special case: ALWAYS_SHOW means never hide in any view
+    if (featureToggleKey === 'ALWAYS_SHOW') {
+      return false
+    }
+
     if (featureToggleKey && featureToggleKey in featureToggles) {
       const toggleValue = featureToggles[featureToggleKey]
 
@@ -124,6 +129,6 @@ export function shouldHideField(viewMode, fieldName = null, featureToggles = nul
     }
   }
 
-  // Default: hide in Technician view if no toggle defined (for accessInformation, internalMemo)
+  // Default: hide in Technician view if no toggle defined (for internalMemo)
   return viewMode === 'technician'
 }

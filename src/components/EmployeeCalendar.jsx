@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
@@ -12,9 +13,9 @@ import { Select } from './ui/select'
 import { Switch, Label } from './ui/switch'
 import { Input } from './ui/input'
 import { getContrastTextColor } from '../utils/colorHelpers'
-import { shouldHideField } from '../utils/userPreferences'
 
 export default function EmployeeCalendar({ data, viewMode, hideInfo, setHideInfo, selectedDate, setSelectedDate, selectedCompany, setSelectedCompany, selectedTeam, setSelectedTeam }) {
+  const navigate = useNavigate()
   const calendarRef = useRef(null)
   const hasScrolledToToday = useRef(false)
   const isNavigatingProgrammatically = useRef(false)
@@ -161,58 +162,12 @@ export default function EmployeeCalendar({ data, viewMode, hideInfo, setHideInfo
       })
   })
 
-  // Handle event click
+  // Handle event click - navigate to job details page
   const handleEventClick = (clickInfo) => {
-    const { employee, shift, job } = clickInfo.event.extendedProps
-
-    // Remove existing tooltips
-    document.querySelectorAll('.shift-tooltip').forEach(el => el.remove())
-
-    // Create tooltip
-    const tooltip = document.createElement('div')
-    tooltip.className = 'shift-tooltip'
-    tooltip.style.cssText = `
-      position: fixed;
-      left: ${clickInfo.jsEvent.pageX + 10}px;
-      top: ${clickInfo.jsEvent.pageY + 10}px;
-      background: white;
-      border: 1px solid #e2e8f0;
-      border-radius: 8px;
-      padding: 16px;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-      max-width: 400px;
-      z-index: 1000;
-      max-height: 80vh;
-      overflow-y: auto;
-    `
-
-    const featureToggles = data?.metadata?.featureToggles
-    tooltip.innerHTML = generateShiftTooltipHTML(employee, shift, job, viewMode, hideInfo, featureToggles)
-
-    document.body.appendChild(tooltip)
-
-    // Close button
-    const closeBtn = tooltip.querySelector('.close-tooltip')
-    if (closeBtn) {
-      closeBtn.addEventListener('click', () => tooltip.remove())
+    const job = clickInfo.event.extendedProps.job
+    if (job) {
+      navigate(`/jobs/${job.id}`)
     }
-
-    // Click outside to close
-    const closeOnClickOutside = (e) => {
-      if (!tooltip.contains(e.target) && !clickInfo.el.contains(e.target)) {
-        tooltip.remove()
-        document.removeEventListener('click', closeOnClickOutside)
-      }
-    }
-    setTimeout(() => document.addEventListener('click', closeOnClickOutside), 100)
-
-    // Auto-dismiss after 10 seconds
-    setTimeout(() => {
-      if (tooltip.parentNode) {
-        tooltip.remove()
-        document.removeEventListener('click', closeOnClickOutside)
-      }
-    }, 10000)
   }
 
   return (
@@ -352,108 +307,4 @@ export default function EmployeeCalendar({ data, viewMode, hideInfo, setHideInfo
       </Card>
     </div>
   )
-}
-
-// Generate tooltip HTML for shift details
-function generateShiftTooltipHTML(employee, shift, job, viewMode, hideInfo, featureToggles) {
-  if (!job) {
-    return `
-      <div style="font-family: system-ui, -apple-system, sans-serif;">
-        <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-          <h3 style="margin: 0; font-size: 18px; font-weight: 600;">Shift Details</h3>
-          <button class="close-tooltip" style="background: none; border: none; font-size: 20px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
-        </div>
-        <p style="color: #666;">Job details not available</p>
-      </div>
-    `
-  }
-
-  return `
-    <div style="font-family: system-ui, -apple-system, sans-serif;">
-      <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 12px;">
-        <h3 style="margin: 0; font-size: 18px; font-weight: 600;">${job.customerName}</h3>
-        <button class="close-tooltip" style="background: none; border: none; font-size: 20px; cursor: pointer; padding: 0; line-height: 1;">&times;</button>
-      </div>
-
-      <div style="margin-bottom: 8px;">
-        <strong>Employee:</strong> ${employee.name}
-      </div>
-
-      <div style="margin-bottom: 8px;">
-        <strong>Position:</strong> ${employee.position.name}
-      </div>
-
-      <div style="margin-bottom: 8px;">
-        <strong>Time:</strong> ${shift.startTime} - ${shift.endTime}
-      </div>
-
-      <div style="margin-bottom: 8px;">
-        <strong>Service Type:</strong> ${job.serviceType || 'N/A'}
-      </div>
-
-      <div style="margin-bottom: 8px;">
-        <strong>Address:</strong> ${job.address || 'N/A'}
-      </div>
-
-      ${getContactInfoHTML(job, viewMode, hideInfo, featureToggles)}
-
-      ${getInstructionsHTML(job, viewMode, hideInfo, featureToggles)}
-    </div>
-  `
-}
-
-// Generate contact info HTML
-function getContactInfoHTML(job, viewMode, hideInfo, featureToggles) {
-  if (!job.contactInfo) {
-    return ''
-  }
-
-  const contactParts = []
-  if (!shouldHideField(viewMode, hideInfo, 'customerPhone', featureToggles) && job.contactInfo.phone) {
-    contactParts.push(`Phone: ${job.contactInfo.phone}`)
-  }
-  if (!shouldHideField(viewMode, hideInfo, 'customerEmail', featureToggles) && job.contactInfo.email) {
-    contactParts.push(`Email: ${job.contactInfo.email}`)
-  }
-
-  if (contactParts.length === 0) {
-    return ''
-  }
-
-  return `
-    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
-      <strong>Contact:</strong> ${contactParts.join(' | ')}
-    </div>
-  `
-}
-
-// Generate instructions HTML (excluding sensitive fields in technician view)
-function getInstructionsHTML(job, viewMode, hideInfo, featureToggles) {
-  const hideField = shouldHideField(viewMode, hideInfo, null, featureToggles)
-
-  const instructions = []
-
-  // Always show these instructions
-  if (job.specialInstructions) instructions.push(`<strong>Special Instructions:</strong> ${job.specialInstructions}`)
-  if (job.petInstructions) instructions.push(`<strong>Pet Instructions:</strong> ${job.petInstructions}`)
-  if (job.directions) instructions.push(`<strong>Directions:</strong> ${job.directions}`)
-
-  // Only show sensitive instructions in office view
-  if (!hideField) {
-    if (job.accessInformation) instructions.push(`<strong>Access Information:</strong> ${job.accessInformation}`)
-    if (job.internalMemo) instructions.push(`<strong>Internal Memo:</strong> ${job.internalMemo}`)
-  }
-
-  if (instructions.length === 0) {
-    return ''
-  }
-
-  return `
-    <div style="margin-top: 12px; padding-top: 12px; border-top: 1px solid #e2e8f0;">
-      <strong>Instructions:</strong>
-      <div style="margin-top: 4px; font-size: 14px; color: #666;">
-        ${instructions.join('<br/><br/>')}
-      </div>
-    </div>
-  `
 }
