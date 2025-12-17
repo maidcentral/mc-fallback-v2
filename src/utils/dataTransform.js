@@ -10,11 +10,21 @@ import { getPositionById } from '../constants/teamPositions'
 /**
  * Detect which data format is being used
  * @param {Object} jsonData - Raw JSON data
- * @returns {string} - 'formatA' or 'drAllData'
+ * @returns {string} - 'formatA', 'drAllData', or 'singleCompany'
  */
 function detectFormat(jsonData) {
-  if (!jsonData || !jsonData.Result) {
-    throw new Error('Invalid data: Missing Result')
+  if (!jsonData) {
+    throw new Error('Invalid data: No data provided')
+  }
+
+  // Single Company format: Has ServiceCompanyId and Jobs array at top level
+  if (jsonData.ServiceCompanyId && Array.isArray(jsonData.Jobs)) {
+    return 'singleCompany'
+  }
+
+  // Check for Result-based formats
+  if (!jsonData.Result) {
+    throw new Error('Invalid data: Missing Result or unrecognized format')
   }
 
   // Format A: Result is an array of jobs
@@ -36,10 +46,12 @@ function detectFormat(jsonData) {
  * @returns {Object} - Transformed data in internal format
  */
 export function transformData(jsonData) {
-  const format = detectFormat(jsonData)
+  const detectedFormat = detectFormat(jsonData)
 
-  if (format === 'formatA') {
+  if (detectedFormat === 'formatA') {
     return transformFormatA(jsonData)
+  } else if (detectedFormat === 'singleCompany') {
+    return transformSingleCompany(jsonData)
   } else {
     return transformDRAllData(jsonData)
   }
@@ -78,6 +90,115 @@ export function transformFormatA(jsonData) {
     teams,
     jobs: transformedJobs,
     employees
+  }
+}
+
+/**
+ * Main transformation function for Single Company format
+ * This format has the company data at the top level with a Jobs array
+ * @param {Object} jsonData - Raw JSON data from single company export
+ * @returns {Object} - Transformed data in internal format
+ */
+export function transformSingleCompany(jsonData) {
+  if (!jsonData || !Array.isArray(jsonData.Jobs)) {
+    throw new Error('Invalid Single Company data: Missing Jobs array')
+  }
+
+  const jobs = jsonData.Jobs
+
+  // Create company entry from top-level data
+  const companies = [{
+    id: String(jsonData.ServiceCompanyId),
+    name: jsonData.Name || 'Unknown Company'
+  }]
+
+  // Extract FeatureToggles from top level
+  const featureToggles = jsonData.FeatureToggles || {}
+
+  // Add company info to each job for consistency with DR format
+  const jobsWithCompanyInfo = jobs.map(job => ({
+    ...job,
+    ServiceCompanyId: jsonData.ServiceCompanyId,
+    ServiceCompanyName: jsonData.Name
+  }))
+
+  // Extract unique teams from all jobs (using DR format fields since structure is similar)
+  const teams = extractTeamsDR(jobsWithCompanyInfo)
+
+  // Transform jobs to internal format (using DR format since structure is similar)
+  const transformedJobs = jobsWithCompanyInfo.map(job => transformJobDR(job))
+
+  // Extract employees from all jobs
+  const employees = extractEmployees(jobsWithCompanyInfo)
+
+  // Calculate metadata
+  const metadata = calculateMetadataSingleCompany(transformedJobs, teams, employees, jsonData, featureToggles)
+
+  return {
+    metadata,
+    companies,
+    teams,
+    jobs: transformedJobs,
+    employees
+  }
+}
+
+/**
+ * Calculate metadata from Single Company format transformed data
+ * @param {Array} jobs - Transformed jobs array
+ * @param {Array} teams - Teams array
+ * @param {Array} employees - Employees array
+ * @param {Object} companyData - Original company data object
+ * @param {Object} featureToggles - Extracted FeatureToggles
+ * @returns {Object} - Metadata object
+ */
+function calculateMetadataSingleCompany(jobs, teams, employees, companyData, featureToggles) {
+  // Use provided date range if available
+  let startDate = ''
+  let endDate = ''
+
+  if (companyData.DateRangeStart) {
+    try {
+      startDate = format(parseISO(companyData.DateRangeStart), 'yyyy-MM-dd')
+    } catch (error) {
+      console.error('Error parsing DateRangeStart:', error)
+    }
+  }
+
+  if (companyData.DateRangeEnd) {
+    try {
+      endDate = format(parseISO(companyData.DateRangeEnd), 'yyyy-MM-dd')
+    } catch (error) {
+      console.error('Error parsing DateRangeEnd:', error)
+    }
+  }
+
+  // Fallback to calculating from jobs if no date range provided
+  if (!startDate || !endDate) {
+    const dates = jobs
+      .map(job => job.schedule.date)
+      .filter(Boolean)
+      .map(dateStr => parseISO(dateStr))
+
+    startDate = dates.length > 0 ? format(min(dates), 'yyyy-MM-dd') : ''
+    endDate = dates.length > 0 ? format(max(dates), 'yyyy-MM-dd') : ''
+  }
+
+  return {
+    companyName: companyData.Name || 'MaidCentral',
+    lastUpdated: companyData.GeneratedAt || new Date().toISOString(),
+    dataFormat: 'single-company',
+    dataVersion: '1.0',
+    dataRange: {
+      startDate,
+      endDate
+    },
+    stats: {
+      totalJobs: jobs.length,
+      totalTeams: teams.length - 1, // Exclude "Unassigned" team from count
+      totalEmployees: employees.length
+    },
+    featureToggles: featureToggles || {}
   }
 }
 
